@@ -28,14 +28,14 @@ static void gpio_setup(void)
 	/* Manually: */
 	/* RCC_AHB1ENR |= RCC_AHB1ENR_IOPGEN; */
 	/* Using API functions: */
-	rcc_periph_clock_enable(RCC_GPIOG);
+	rcc_periph_clock_enable(RCC_GPIOC);
 
 	/* Set GPIO13 (in GPIO port G) to 'output push-pull'. */
 	/* Manually: */
 	/* GPIOG_CRH = (GPIO_CNF_OUTPUT_PUSHPULL << 2); */
 	/* GPIOG_CRH |= (GPIO_MODE_OUTPUT_2_MHZ << 2); */
 	/* Using API functions: */
-	gpio_mode_setup(GPIOG, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO13);
+	gpio_mode_setup(GPIOC, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO5);
 }
 
 int main(void)
@@ -71,7 +71,7 @@ int main(void)
 #endif
 
 		/* Using API function gpio_toggle(): */
-		gpio_toggle(GPIOG, GPIO13);	/* LED on/off */
+		gpio_toggle(GPIOC, GPIO5);	/* LED on/off */
 		for (i = 0; i < 1000000; i++) {	/* Wait a bit. */
 			__asm__("nop");
 		}
