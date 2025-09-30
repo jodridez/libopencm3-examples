@@ -38,6 +38,12 @@
 #define LCC LREDF_PORT, LREDF
 #define LUP LREDB_PORT, LREDB
 
+/* Definiciones para el servo con periodo de 20ms (ARR = 13124, PRESCALER = 0x00FF) */
+#define SERVO_0_PERCENT    0      // 0% duty cycle
+#define SERVO_10_PERCENT   1312   // 10% duty cycle (13124 * 0.10)
+#define SERVO_50_PERCENT   6562   // 50% duty cycle (13124 * 0.50)
+#define SERVO_100_PERCENT  13124  // 100% duty cycle
+
 /*
   Timer 1 clk frequency:
   If TIMPRE == 0: (default)
@@ -68,17 +74,9 @@ static void clock_setup(void)
     // are set here (libopencm3/lib/stm32/f4/rcc.c)
     // TIM1 is on APB2
     // TIMPRE: arriba. Default 0
-    // TIM1CLK = 2*PCLK = 2*84MHz
-    // TIM1CNT = 168MHz/2^16   (TIM1CLK/(PRESCALER+1))
-    // TIM1CNT = 2563.48Hz
-    // If TIMPRE == 0 and PCLK > DIV1:
-    // FCNT = 2*PCLK/(TIMPRESC+1) (PCLK = APB2 for TIM1)
-    // If TIMPRE == 0 and PCLK == DIV1:
-    // FCNT = PCLK/(TIMPRESC+1) (PCLK = APB2 for TIM1)
-    // If TIMPRE == 1 and PCLK > DIV4:
-    // FCNT = 4*PCLK/(TIMPRESC+1) (PCLK = APB2 for TIM1)
-    // If TIMPRE == 1 and PCLK <= DIV4:
-    // FCNT = HCLK/(TIMPRESC+1) (PCLK = APB2 for TIM1)
+    // TIM1CLK = 2*PCLK = 2*84MHz = 168MHz
+    // FCNT = 168MHz/(PRESCALER+1) = 168MHz/256 = 656250 Hz
+    // T_timer = (ARR+1)/FCNT = 13125/656250 = 0.02s = 20ms
 
 	/* Enable GPIOG clock. */
 	rcc_periph_clock_enable(RCC_GPIOG);
@@ -86,7 +84,7 @@ static void clock_setup(void)
 	/* Enable GPIOB clock. */
 	rcc_periph_clock_enable(RCC_GPIOB);
 
-	/* Enable GPIOB clock. */
+	/* Enable GPIOC clock. */
 	rcc_periph_clock_enable(RCC_GPIOC);
 
 	/* Enable TIM1 clock. */
@@ -103,19 +101,17 @@ static void gpio_setup(void)
 	gpio_mode_setup(GPIOC, GPIO_MODE_OUTPUT,
                     GPIO_PUPD_NONE, GPIO5);
 
-    /* Set GPIOB13 as AF1 */
+    /* Set GPIOB13 as AF1 (TIM1_CH1N) */
     gpio_set_af(LGREENB_PORT, GPIO_AF1, LGREENB);
 
 	/* Set GPIO13 (in GPIO port B) to 'alternate function push-pull'. */
 	gpio_mode_setup(LGREENB_PORT, GPIO_MODE_AF,
                     GPIO_PUPD_NONE, LGREENB);
-
-
 }
 
 static void tim_setup(void)
 {
-  /* Enable TIM1 clock. */
+	/* Enable TIM1 clock. */
 	rcc_periph_clock_enable(RCC_TIM1);
 
 	/* Enable TIM1 interrupt. */
@@ -125,92 +121,103 @@ static void tim_setup(void)
 	/* Reset TIM1 peripheral to defaults. */
 	rcc_periph_reset_pulse(RST_TIM1);
 
-	/* Timer global mode:
-	 * - No divider
-	 * - Alignment edge
-	 * - Direction up
-	 * (These are actually default values after reset above, so this call
-	 * is strictly unnecessary, but demos the api for alternative settings)
-	 */
+	/* Timer global mode: Edge-aligned, count up */
 	timer_set_mode(TIM1, TIM_CR1_CKD_CK_INT,
-                   TIM_CR1_CMS_EDGE, TIM_CR1_DIR_UP); // Cambio modo de conteo, anterior: TIM_CR1_CMS_CENTER_3
+                   TIM_CR1_CMS_EDGE, TIM_CR1_DIR_UP);
 
-	/*
-	 * Please take note that the clock source for STM32 timers
-	 * might not be the raw APB1/APB2 clocks.  In various conditions they
-	 * are doubled.  See the Reference Manual for full details!
-	 */
-	timer_set_prescaler(TIM1, 0x00FF); //0x00FF para servo, por defecto: xFFFF, 2563Hz clk
-    //timer_set_repetition_counter(TIM1, 15);
+	/* Prescaler configurado para servo: 0x00FF (255) */
+	timer_set_prescaler(TIM1, 0x00FF);
+	
     timer_disable_preload(TIM1);
     timer_continuous_mode(TIM1);
 
-    /* Count period */
-	timer_set_period(TIM1, 13124); // 2563 por defecto, 13124 para servo 
+    /* Periodo configurado para 20ms con prescaler 255 */
+	timer_set_period(TIM1, 13124);
 
-	/* Set the initual output compare value for OC1. */
-	timer_set_oc_value(TIM1, TIM_OC1, 1312); //nosar los negativos // 320 por defecto // 1312 para servo (10% del periodo)
+	/* Valor inicial del servo (10% duty cycle) */
+	timer_set_oc_value(TIM1, TIM_OC1, SERVO_10_PERCENT);
     
-    /* Disable outputs. */
-    //timer_enable_oc_output(TIM1, TIM_OC1);
+    /* Habilitar salida complementaria (TIM_OC1N en PB13) */
     timer_enable_oc_output(TIM1, TIM_OC1N);
-    timer_set_oc_mode(TIM1, TIM_OC1, TIM_OCM_PWM1); // no usar los negativos
-    //timer_set_oc_mode(TIM1, TIM_OC1, TIM_OCM_FORCE_HIGH);
-    //timer_set_oc_polarity_high(TIM1, TIM_OC1N);
-    //timer_set_oc_idle_state_unset(TIM1, TIM_OC1N);
-    //time_reset_output_idle(TIM1, TIM_CR2_OIS1N);
-    //timer_disable_oc_output(TIM1, TIM_OC2);
-    //timer_disable_oc_output(TIM1, TIM_OC2N);
-    //timer_disable_oc_output(TIM1, TIM_OC3);
-    //timer_disable_oc_output(TIM1, TIM_OC3N);
+    timer_set_oc_mode(TIM1, TIM_OC1, TIM_OCM_PWM1);
 
-    /* Generate update event to reload all registers before starting*/
+    /* Habilitar salida principal del timer */
     timer_enable_break_main_output(TIM1);
-    //timer_set_disabled_off_state_in_idle_mode(TIM1);
-    //timer_set_disabled_off_state_in_run_mode(TIM1);
     timer_disable_break(TIM1);
 
-    /* Counter enable. */
+    /* Habilitar contador */
 	timer_enable_counter(TIM1);
 
-	/* Enable Channel 1 compare interrupt to recalculate compare values */
+	/* Habilitar interrupciones */
 	timer_enable_irq(TIM1, TIM_DIER_CC1IE);
 	timer_enable_irq(TIM1, TIM_DIER_UIE);
-    //timer_generate_event(TIM1, TIM_EGR_UG);
-
 }
 
 void tim1_cc_isr(void)
 {
-  timer_clear_flag(TIM1, TIM_SR_CC1IF);
-  gpio_toggle(LCC);
+	timer_clear_flag(TIM1, TIM_SR_CC1IF);
+	gpio_toggle(LCC);
 }
 
 void tim1_up_tim10_isr(void)
 {
-  timer_clear_flag(TIM1, TIM_SR_UIF);
-  gpio_toggle(LUP);
+	timer_clear_flag(TIM1, TIM_SR_UIF);
+	gpio_toggle(LUP);
 }
 
+/* Función de delay simple basada en ciclos de CPU */
+static void delay_ms(uint32_t ms)
+{
+	/* A 168MHz, aproximadamente 168000 ciclos por ms */
+	/* Ajustar el multiplicador según sea necesario */
+	for (uint32_t i = 0; i < ms; i++) {
+		for (uint32_t j = 0; j < 21000; j++) {
+			__asm__("nop");
+		}
+	}
+}
+
+/* Función auxiliar para delay en segundos */
+static void delay_seconds(uint32_t seconds)
+{
+	delay_ms(seconds * 1000);
+}
 
 int main(void)
 {
-	int i;
-
 	clock_setup();
 	gpio_setup();
-    tim_setup();
+	tim_setup();
 
-	/* Set two LEDs for wigwag effect when toggling. */
+	/* Encender LED inicial */
 	gpio_set(LGREENF_PORT, LGREENF);
 
-	/* Blink the LEDs (PG13 and PG14) on the board. */
+	/* Rutina infinita del servo */
 	while (1) {
-		/* Toggle LEDs. */
+		/* 0% duty cycle por 2 segundos */
+		timer_set_oc_value(TIM1, TIM_OC1, SERVO_0_PERCENT);
+		gpio_clear(LGREENF_PORT, LGREENF); // LED apagado
+		delay_seconds(2);
+		
+		/* 10% duty cycle por 1 segundo */
+		timer_set_oc_value(TIM1, TIM_OC1, SERVO_10_PERCENT);
+		gpio_set(LGREENF_PORT, LGREENF); // LED encendido
+		delay_seconds(1);
+		
+		/* 100% duty cycle por 3 segundos */
+		timer_set_oc_value(TIM1, TIM_OC1, SERVO_100_PERCENT);
+		gpio_clear(LGREENF_PORT, LGREENF);
+		delay_seconds(3);
+		
+		/* 50% duty cycle por 1 segundo */
+		timer_set_oc_value(TIM1, TIM_OC1, SERVO_50_PERCENT);
+		gpio_set(LGREENF_PORT, LGREENF);
+		delay_seconds(1);
+		
+		/* 10% duty cycle por 5 segundos */
+		timer_set_oc_value(TIM1, TIM_OC1, SERVO_10_PERCENT);
 		gpio_toggle(LGREENF_PORT, LGREENF);
-		for (i = 0; i < 6000000; i++) { /* Wait a bit. */
-			__asm__("nop");
-		}
+		delay_seconds(5);
 	}
 
 	return 0;
