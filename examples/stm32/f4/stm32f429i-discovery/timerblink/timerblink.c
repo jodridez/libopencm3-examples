@@ -133,7 +133,7 @@ static void tim_setup(void)
 	 * is strictly unnecessary, but demos the api for alternative settings)
 	 */
 	timer_set_mode(TIM1, TIM_CR1_CKD_CK_INT,
-                   TIM_CR1_CMS_CENTER_3, TIM_CR1_DIR_UP);
+                   TIM_CR1_CMS_EDGE, TIM_CR1_DIR_UP); // Cambio modo de conteo, anterior: TIM_CR1_CMS_CENTER_3
 
 	/*
 	 * Please take note that the clock source for STM32 timers
