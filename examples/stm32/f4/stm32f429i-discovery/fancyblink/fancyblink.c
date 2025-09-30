@@ -52,10 +52,27 @@ int main(void)
 	/* Blink the LEDs (PG13 and PG14) on the board. */
 	while (1) {
 		/* Toggle LEDs. */
-		gpio_toggle(GPIOG, GPIO13 | GPIO14);
+		//gpio_toggle(GPIOG, GPIO13 | GPIO14);
+		// for (i = 0; i < 6000000; i++) { /* Wait a bit. */
+		//	__asm__("nop");
+		// }
+		
+		//LED 13 ON
+		gpio_set(GPIOG, GPIO13);
 		for (i = 0; i < 6000000; i++) { /* Wait a bit. */
 			__asm__("nop");
 		}
+		// LED 13 OFF
+		gpio_clear(GPIOG, GPIO13);
+
+		///////
+		//LED 14 ON
+		gpio_set(GPIOG, GPIO14);
+		for (i = 0; i < 6000000; i++) { /* Wait a bit. */
+			__asm__("nop");
+		}
+		// LED 14 OFF
+		gpio_clear(GPIOG, GPIO14);
 	}
 
 	return 0;
