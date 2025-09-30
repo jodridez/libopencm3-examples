@@ -149,7 +149,7 @@ static void tim_setup(void)
 	timer_set_period(TIM1, 13124); // 2563 por defecto, 13124 para servo 
 
 	/* Set the initual output compare value for OC1. */
-	timer_set_oc_value(TIM1, TIM_OC1, 984); //nosar los negativos // 320 por defecto // 984 para servo (7.5% del periodo)
+	timer_set_oc_value(TIM1, TIM_OC1, 1312); //nosar los negativos // 320 por defecto // 1312 para servo (10% del periodo)
     
     /* Disable outputs. */
     //timer_enable_oc_output(TIM1, TIM_OC1);
