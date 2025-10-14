@@ -137,7 +137,7 @@ static void tim_setup(void)
 	timer_set_period(TIM1, 13124);
 
 	/* Valor inicial del servo (10% duty cycle) */
-	timer_set_oc_value(TIM1, TIM_OC1, SERVO_ANGLE_10_PERCENT);
+	//timer_set_oc_value(TIM1, TIM_OC1, SERVO_ANGLE_10_PERCENT);
     
     /* Habilitar salida complementaria (TIM_OC1N en PB13) */
     timer_enable_oc_output(TIM1, TIM_OC1N);
