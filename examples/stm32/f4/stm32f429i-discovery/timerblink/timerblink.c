@@ -39,10 +39,12 @@
 #define LUP LREDB_PORT, LREDB
 
 /* Definiciones para el servo con periodo de 20ms (ARR = 13124, PRESCALER = 0x00FF) */
-#define SERVO_0_PERCENT    0      // 0% duty cycle
-#define SERVO_10_PERCENT   1312   // 10% duty cycle (13124 * 0.10)
-#define SERVO_50_PERCENT   6562   // 50% duty cycle (13124 * 0.50)
-#define SERVO_100_PERCENT  13124  // 100% duty cycle
+#define SERVO_ANGLE_0_PERCENT    656   // 5% duty cycle = 1ms pulso (0° o mínimo)
+#define SERVO_ANGLE_10_PERCENT   722   // 5.5% duty cycle ≈ 1.1ms pulso (18°)
+#define SERVO_ANGLE_50_PERCENT   984   // 7.5% duty cycle = 1.5ms pulso (90° o centro)
+#define SERVO_ANGLE_100_PERCENT  1312  // 10% duty cycle = 2ms pulso (180° o máximo)
+
+#define ITERATIONS_PER_MS 41667
 
 /*
   Timer 1 clk frequency:
@@ -135,7 +137,7 @@ static void tim_setup(void)
 	timer_set_period(TIM1, 13124);
 
 	/* Valor inicial del servo (10% duty cycle) */
-	timer_set_oc_value(TIM1, TIM_OC1, SERVO_10_PERCENT);
+	timer_set_oc_value(TIM1, TIM_OC1, SERVO_ANGLE_10_PERCENT);
     
     /* Habilitar salida complementaria (TIM_OC1N en PB13) */
     timer_enable_oc_output(TIM1, TIM_OC1N);
@@ -165,59 +167,60 @@ void tim1_up_tim10_isr(void)
 	gpio_toggle(LUP);
 }
 
-/* Función de delay simple basada en ciclos de CPU */
-static void delay_ms(uint32_t ms)
-{
-	/* A 168MHz, aproximadamente 168000 ciclos por ms */
-	/* Ajustar el multiplicador según sea necesario */
-	for (uint32_t i = 0; i < ms; i++) {
-		for (uint32_t j = 0; j < 21000; j++) {
-			__asm__("nop");
-		}
-	}
-}
 
-/* Función auxiliar para delay en segundos */
-static void delay_seconds(uint32_t seconds)
-{
-	delay_ms(seconds * 1000);
-}
 
 int main(void)
 {
 	clock_setup();
 	gpio_setup();
 	tim_setup();
-
+	
+	int i;
 	/* Encender LED inicial */
 	gpio_set(LGREENF_PORT, LGREENF);
 
 	/* Rutina infinita del servo */
 	while (1) {
 		/* 0% duty cycle por 2 segundos */
-		timer_set_oc_value(TIM1, TIM_OC1, SERVO_0_PERCENT);
+		timer_set_oc_value(TIM1, TIM_OC1, SERVO_ANGLE_0_PERCENT);
 		gpio_clear(LGREENF_PORT, LGREENF); // LED apagado
-		delay_seconds(2);
+			//delay_seconds(2);
+		for (i = 0; i < 2*41666667; i++) { /* Wait a bit. */
+			__asm__("nop");
+		}
 		
 		/* 10% duty cycle por 1 segundo */
-		timer_set_oc_value(TIM1, TIM_OC1, SERVO_10_PERCENT);
+		timer_set_oc_value(TIM1, TIM_OC1, SERVO_ANGLE_10_PERCENT);
 		gpio_set(LGREENF_PORT, LGREENF); // LED encendido
-		delay_seconds(1);
+		//delay_seconds(1);
+		for (i = 0; i < 1*41666667; i++) { /* Wait a bit. */
+			__asm__("nop");
+		}
 		
 		/* 100% duty cycle por 3 segundos */
-		timer_set_oc_value(TIM1, TIM_OC1, SERVO_100_PERCENT);
+		timer_set_oc_value(TIM1, TIM_OC1, SERVO_ANGLE_100_PERCENT);
 		gpio_clear(LGREENF_PORT, LGREENF);
-		delay_seconds(3);
+		//delay_seconds(3);
+		for (i = 0; i < 3*41666667; i++) { /* Wait a bit. */
+			__asm__("nop");
+		}
 		
 		/* 50% duty cycle por 1 segundo */
-		timer_set_oc_value(TIM1, TIM_OC1, SERVO_50_PERCENT);
+		timer_set_oc_value(TIM1, TIM_OC1, SERVO_ANGLE_50_PERCENT);
 		gpio_set(LGREENF_PORT, LGREENF);
-		delay_seconds(1);
+		//delay_seconds(1);
+		for (i = 0; i < 1*41666667; i++) { /* Wait a bit. */
+			__asm__("nop");
+		}
 		
 		/* 10% duty cycle por 5 segundos */
-		timer_set_oc_value(TIM1, TIM_OC1, SERVO_10_PERCENT);
+		timer_set_oc_value(TIM1, TIM_OC1, SERVO_ANGLE_10_PERCENT);
 		gpio_toggle(LGREENF_PORT, LGREENF);
-		delay_seconds(5);
+		//delay_seconds(5);
+		for (i = 0; i < 5*41666667; i++) { /* Wait a bit. */
+			__asm__("nop");
+		}
+		
 	}
 
 	return 0;
