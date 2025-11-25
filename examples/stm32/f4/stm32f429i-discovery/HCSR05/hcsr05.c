@@ -1,14 +1,15 @@
 /*
- * Dual HY-SRF05 Ultrasonic Sensors - Timer-Based Version
+ * Dual HY-SRF05 Ultrasonic Sensors - High-Speed Version
  * STM32F429I-DISC1
  * 
  * Sensor 1: PB6 (Trigger), PB7 (Echo)
  * Sensor 2: PE2 (Trigger), PE3 (Echo)
  * 
- * Timer Configuration:
- * - TIM5: 32-bit free-running timer @ 1 MHz (1 µs resolution)
- * - Clock: APB1 = 42 MHz, TIM5CLK = 84 MHz (x2 multiplier)
- * - Prescaler: 83 (84 MHz / 84 = 1 MHz)
+ * OPTIMIZADO PARA:
+ * - Control gestual de alta velocidad (juego Pong)
+ * - Aritmética entera (sin floats)
+ * - Muestreo rápido (~50Hz por sensor, 25Hz sistema completo)
+ * - Tiempo de estabilización inicial del timer
  */
 
 #include <libopencm3/stm32/rcc.h>
@@ -35,27 +36,43 @@
 #define ECHO2_PIN  GPIO3
 
 /* ============================================================================
- * CONSTANTES DE TEMPORIZACIÓN
+ * CONSTANTES DE TEMPORIZACIÓN (ARITMÉTICA ENTERA)
  * ============================================================================ */
 
-/* Timeouts para detección de ECHO */
+/* Timeouts para detección de ECHO (en microsegundos) */
 #define TIMEOUT_ECHO_START_US  15000UL  // 15ms para inicio de echo
 #define TIMEOUT_ECHO_END_US    35000UL  // 35ms máximo para echo (~6m)
 
 /* Límites físicos del sensor HY-SRF05 */
-#define MIN_DISTANCE_CM        2.0f
-#define MAX_DISTANCE_CM        450.0f
+#define MIN_DISTANCE_MM        20       // 2 cm = 20 mm
+#define MAX_DISTANCE_MM        4500     // 450 cm = 4500 mm
 #define MIN_VALID_PULSE_US     116UL    // ~2cm
 #define MAX_VALID_PULSE_US     26200UL  // ~450cm
 
 /* Timing del sensor */
-#define TRIGGER_PULSE_US       10       // Pulso trigger
+#define TRIGGER_PULSE_US       10       // Pulso trigger de 10 µs
 #define SENSOR_SETTLING_US     2        // Tiempo de estabilización
-#define INTER_SENSOR_DELAY_MS  60       // Delay entre sensores
-#define INTER_CYCLE_DELAY_MS   60       // Delay entre ciclos
+#define INTER_SENSOR_DELAY_MS  20       // Delay mínimo entre sensores (antes: 60ms)
+#define INTER_CYCLE_DELAY_MS   20       // Delay mínimo entre ciclos (antes: 60ms)
 
-/* Velocidad del sonido: 343 m/s a 20°C */
-#define US_PER_CM              58.24f   // 1 / (0.0343 / 2)
+/* 
+ * Conversión velocidad del sonido (aritmética entera):
+ * Velocidad = 343 m/s = 0.0343 cm/µs
+ * Distancia (mm) = (tiempo_us * 343) / 2000
+ * Simplificado: distancia_mm = (tiempo_us * 343) / 2000
+ * 
+ * Para evitar overflow en multiplicación:
+ * - tiempo_us máximo: 26200
+ * - 26200 * 343 = 8,986,600 (cabe en uint32_t)
+ */
+#define SOUND_SPEED_NUMERATOR   343     // m/s
+#define SOUND_SPEED_DENOMINATOR 2000    // Factor de conversión a mm
+
+/* Delay entre actualizaciones de pantalla (más rápido) */
+#define DISPLAY_UPDATE_MS      50       // 20 Hz de actualización
+
+/* Tiempo de estabilización inicial del timer */
+#define TIMER_WARMUP_MS        60000    // 60 segundos para estabilización completa
 
 /* ============================================================================
  * TIPOS DE DATOS
@@ -70,10 +87,16 @@ typedef enum {
 } sensor_error_t;
 
 typedef struct {
-    float distance_cm;
+    uint16_t distance_mm;     // Distancia en milímetros (entero)
     sensor_error_t error;
     uint32_t pulse_us;
 } sensor_reading_t;
+
+/* ============================================================================
+ * VARIABLES GLOBALES
+ * ============================================================================ */
+
+static volatile uint8_t timer_ready = 0;  // Flag de timer estabilizado
 
 /* ============================================================================
  * CONFIGURACIÓN DEL RELOJ Y TIMERS
@@ -81,32 +104,11 @@ typedef struct {
 
 /**
  * @brief Configura el reloj del sistema a 168 MHz
- * 
- * Clock Tree:
- * - SYSCLK: 168 MHz
- * - AHB (HCLK): 168 MHz / 1 = 168 MHz
- * - APB1: 168 MHz / 4 = 42 MHz
- * - APB2: 168 MHz / 2 = 84 MHz
- * 
- * TIM5 está en APB1:
- * - TIMPRE = 0 (default)
- * - APB1 prescaler != 1, por lo tanto:
- * - TIM5CLK = 2 × PCLK1 = 2 × 42 MHz = 84 MHz
  */
 static void clock_setup(void)
 {
-    /* Configurar PLL para 168 MHz desde HSE de 8 MHz */
     rcc_clock_setup_pll(&rcc_hse_8mhz_3v3[RCC_CLOCK_3V3_168MHZ]);
     
-    /* 
-     * La función rcc_clock_setup_pll configura:
-     * - AHB Prescaler = 1 (NODIV)
-     * - APB1 Prescaler = 4 (DIV4)
-     * - APB2 Prescaler = 2 (DIV2)
-     * - Actualiza: rcc_ahb_frequency, rcc_apb1_frequency, rcc_apb2_frequency
-     */
-    
-    /* Habilitar relojes de periféricos */
     rcc_periph_clock_enable(RCC_GPIOB);
     rcc_periph_clock_enable(RCC_GPIOE);
     rcc_periph_clock_enable(RCC_TIM5);
@@ -115,55 +117,24 @@ static void clock_setup(void)
 /**
  * @brief Configura TIM5 como temporizador de 32-bit a 1 MHz
  * 
- * Configuración:
- * - TIM5CLK = 84 MHz (2 × APB1)
- * - Prescaler = 83 (para obtener 1 MHz)
- * - FCNT = 84 MHz / (83 + 1) = 1 MHz
- * - Resolución = 1 µs
- * - Período = 2^32 - 1 (máximo para 32-bit)
- * - Modo: Continuo, sin preload, conteo ascendente
+ * TIM5CLK = 84 MHz (2 × APB1), Prescaler = 83 → 1 MHz (1 µs)
+ * 
+ * NOTA: El timer necesita ~60 segundos para estabilizarse completamente
+ * y producir pulsos de trigger precisos de 10 µs.
  */
 static void tim5_setup(void)
 {
-    /* Reset del periférico a valores por defecto */
     rcc_periph_reset_pulse(RST_TIM5);
-    
-    /* Deshabilitar el contador durante la configuración */
     timer_disable_counter(TIM5);
     
-    /* 
-     * Configurar modo del timer:
-     * - Edge-aligned (no center-aligned)
-     * - Clock division = 1 (CK_INT)
-     * - Direction = UP (conteo ascendente)
-     */
     timer_set_mode(TIM5, TIM_CR1_CKD_CK_INT, TIM_CR1_CMS_EDGE, TIM_CR1_DIR_UP);
+    timer_set_prescaler(TIM5, 83);  // 84 MHz / 84 = 1 MHz
     
-    /*
-     * Configurar prescaler para 1 MHz:
-     * TIM5CLK = 84 MHz (verificado: 2 × 42 MHz de APB1)
-     * Prescaler = (TIM5CLK / Frecuencia_deseada) - 1
-     * Prescaler = (84,000,000 / 1,000,000) - 1 = 83
-     */
-    timer_set_prescaler(TIM5, 83);
-    
-    /* Deshabilitar preload del ARR (actualización inmediata) */
     timer_disable_preload(TIM5);
-    
-    /* Modo continuo (el timer se reinicia automáticamente) */
     timer_continuous_mode(TIM5);
-    
-    /* 
-     * Configurar período máximo (32-bit):
-     * Con 1 MHz, el timer hace overflow cada:
-     * 2^32 µs = 4,294,967,296 µs ≈ 4295 segundos ≈ 71.6 minutos
-     */
     timer_set_period(TIM5, 0xFFFFFFFF);
-    
-    /* Reiniciar el contador a 0 */
     timer_set_counter(TIM5, 0);
     
-    /* Habilitar el contador */
     timer_enable_counter(TIM5);
 }
 
@@ -171,158 +142,151 @@ static void tim5_setup(void)
  * CONFIGURACIÓN DE GPIO
  * ============================================================================ */
 
-/**
- * @brief Configura los pines GPIO para ambos sensores
- */
 static void gpio_setup(void)
 {
-    /* Configurar SENSOR 1 */
+    /* SENSOR 1 */
     gpio_mode_setup(TRIG1_PORT, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, TRIG1_PIN);
     gpio_set_output_options(TRIG1_PORT, GPIO_OTYPE_PP, GPIO_OSPEED_50MHZ, TRIG1_PIN);
     gpio_clear(TRIG1_PORT, TRIG1_PIN);
-    
-    /* Pull-down en ECHO para evitar lecturas flotantes */
     gpio_mode_setup(ECHO1_PORT, GPIO_MODE_INPUT, GPIO_PUPD_PULLDOWN, ECHO1_PIN);
     
-    /* Configurar SENSOR 2 */
+    /* SENSOR 2 */
     gpio_mode_setup(TRIG2_PORT, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, TRIG2_PIN);
     gpio_set_output_options(TRIG2_PORT, GPIO_OTYPE_PP, GPIO_OSPEED_50MHZ, TRIG2_PIN);
     gpio_clear(TRIG2_PORT, TRIG2_PIN);
-    
     gpio_mode_setup(ECHO2_PORT, GPIO_MODE_INPUT, GPIO_PUPD_PULLDOWN, ECHO2_PIN);
 }
 
 /* ============================================================================
- * FUNCIONES DE TEMPORIZACIÓN
+ * FUNCIONES DE TEMPORIZACIÓN (OPTIMIZADAS)
  * ============================================================================ */
 
 /**
  * @brief Calcula diferencia de tiempo con manejo de overflow
- * @param start Tiempo inicial del contador TIM5
- * @param end Tiempo final del contador TIM5
- * @return Diferencia en microsegundos
  */
 static inline uint32_t timer_diff(uint32_t start, uint32_t end)
 {
-    if (end >= start) {
-        return end - start;
-    } else {
-        /* Overflow del contador de 32 bits */
-        return (0xFFFFFFFF - start) + end + 1;
-    }
+    return (end >= start) ? (end - start) : ((0xFFFFFFFF - start) + end + 1);
 }
 
 /**
- * @brief Delay preciso en microsegundos usando TIM5
- * @param us Microsegundos a esperar (máximo ~4,294 segundos)
+ * @brief Delay en microsegundos (versión ultra-optimizada)
  */
 static inline void delay_us(uint32_t us)
 {
     if (us == 0) return;
     
     uint32_t start = timer_get_counter(TIM5);
-    uint32_t target = start + us;
     
-    /* Manejo de overflow del timer */
-    if (target >= start) {
-        /* No hay overflow */
-        while (timer_get_counter(TIM5) < target) {
-            __asm__("nop");
-        }
-    } else {
-        /* Hay overflow: esperar hasta wrap-around */
-        while (timer_get_counter(TIM5) >= start) {
-            __asm__("nop");
-        }
-        /* Luego esperar hasta el target */
-        while (timer_get_counter(TIM5) < target) {
-            __asm__("nop");
-        }
-    }
+    /* Espera activa optimizada */
+    while (timer_diff(start, timer_get_counter(TIM5)) < us);
 }
 
 /**
- * @brief Delay en milisegundos
- * @param ms Milisegundos a esperar
+ * @brief Delay en milisegundos (optimizado)
  */
 static inline void delay_ms(uint32_t ms)
 {
-    while (ms--) {
-        delay_us(1000);
-    }
+    uint32_t start = timer_get_counter(TIM5);
+    uint32_t target_us = ms * 1000UL;
+    
+    while (timer_diff(start, timer_get_counter(TIM5)) < target_us);
 }
 
 /* ============================================================================
- * FUNCIONES DE MEDICIÓN DEL SENSOR
+ * FUNCIONES DE MEDICIÓN (ARITMÉTICA ENTERA)
  * ============================================================================ */
 
 /**
- * @brief Lee el pulso ECHO del sensor ultrasónico
- * @param trig_port Puerto GPIO del trigger
- * @param trig_pin Pin GPIO del trigger
- * @param echo_port Puerto GPIO del echo
- * @param echo_pin Pin GPIO del echo
- * @param reading Estructura donde se almacena el resultado
+ * @brief Lee el pulso ECHO del sensor (versión optimizada)
+ * 
+ * @return 0 si hay error, duración del pulso en µs si es exitoso
  */
-static void hcsr05_read_pulse(uint32_t trig_port, uint16_t trig_pin, 
-                               uint32_t echo_port, uint16_t echo_pin,
-                               sensor_reading_t *reading)
+static uint32_t hcsr05_read_pulse_raw(uint32_t trig_port, uint16_t trig_pin, 
+                                       uint32_t echo_port, uint16_t echo_pin)
 {
     uint32_t start_time, end_time, timeout_start;
     
-    /* Inicializar resultado */
-    reading->error = SENSOR_OK;
-    reading->pulse_us = 0;
-    reading->distance_cm = -1.0f;
-    
-    /* Asegurar que el trigger está bajo */
+    /* Enviar pulso de trigger (10 µs) */
     gpio_clear(trig_port, trig_pin);
     delay_us(SENSOR_SETTLING_US);
-    
-    /* Enviar pulso de trigger (10 µs) */
     gpio_set(trig_port, trig_pin);
     delay_us(TRIGGER_PULSE_US);
     gpio_clear(trig_port, trig_pin);
     
-    /* Esperar flanco de subida del ECHO con timeout */
+    /* Esperar flanco de subida con timeout */
     timeout_start = timer_get_counter(TIM5);
     while (gpio_get(echo_port, echo_pin) == 0) {
         if (timer_diff(timeout_start, timer_get_counter(TIM5)) > TIMEOUT_ECHO_START_US) {
-            reading->error = SENSOR_TIMEOUT_START;
-            return;
+            return 0;  // Timeout
         }
     }
     
-    /* Capturar tiempo de inicio con TIM5 */
     start_time = timer_get_counter(TIM5);
     
-    /* Esperar flanco de bajada del ECHO con timeout */
+    /* Esperar flanco de bajada con timeout */
     while (gpio_get(echo_port, echo_pin) != 0) {
         if (timer_diff(start_time, timer_get_counter(TIM5)) > TIMEOUT_ECHO_END_US) {
-            reading->error = SENSOR_TIMEOUT_END;
-            return;
+            return 0;  // Timeout
         }
     }
     
-    /* Capturar tiempo final */
     end_time = timer_get_counter(TIM5);
     
-    /* Calcular duración del pulso */
-    reading->pulse_us = timer_diff(start_time, end_time);
+    return timer_diff(start_time, end_time);
+}
+
+/**
+ * @brief Convierte tiempo de pulso a distancia en milímetros (aritmética entera)
+ * 
+ * Fórmula: distancia_mm = (pulse_us * 343) / 2000
+ */
+static inline uint16_t pulse_to_distance_mm(uint32_t pulse_us)
+{
+    /* Evitar overflow: verificar límites antes de multiplicar */
+    if (pulse_us > MAX_VALID_PULSE_US) {
+        return 0;
+    }
     
-    /* Validar rango del pulso */
-    if (reading->pulse_us < MIN_VALID_PULSE_US || 
-        reading->pulse_us > MAX_VALID_PULSE_US) {
-        reading->error = SENSOR_INVALID_PULSE;
+    /* Cálculo entero: (pulse_us * 343) / 2000 */
+    uint32_t distance = (pulse_us * SOUND_SPEED_NUMERATOR) / SOUND_SPEED_DENOMINATOR;
+    
+    return (uint16_t)distance;
+}
+
+/**
+ * @brief Lee el sensor y retorna la medición completa
+ */
+static void hcsr05_read(uint32_t trig_port, uint16_t trig_pin,
+                        uint32_t echo_port, uint16_t echo_pin,
+                        sensor_reading_t *reading)
+{
+    reading->error = SENSOR_OK;
+    reading->pulse_us = 0;
+    reading->distance_mm = 0;
+    
+    /* Leer pulso crudo */
+    uint32_t pulse = hcsr05_read_pulse_raw(trig_port, trig_pin, echo_port, echo_pin);
+    
+    if (pulse == 0) {
+        reading->error = SENSOR_TIMEOUT_START;
         return;
     }
     
-    /* Calcular distancia en centímetros */
-    reading->distance_cm = (float)reading->pulse_us / US_PER_CM;
+    /* Validar rango del pulso */
+    if (pulse < MIN_VALID_PULSE_US || pulse > MAX_VALID_PULSE_US) {
+        reading->error = SENSOR_INVALID_PULSE;
+        reading->pulse_us = pulse;
+        return;
+    }
     
-    /* Verificar rango físico del sensor */
-    if (reading->distance_cm < MIN_DISTANCE_CM || 
-        reading->distance_cm > MAX_DISTANCE_CM) {
+    /* Convertir a distancia */
+    reading->pulse_us = pulse;
+    reading->distance_mm = pulse_to_distance_mm(pulse);
+    
+    /* Verificar rango físico */
+    if (reading->distance_mm < MIN_DISTANCE_MM || 
+        reading->distance_mm > MAX_DISTANCE_MM) {
         reading->error = SENSOR_OUT_OF_RANGE;
     }
 }
@@ -331,19 +295,54 @@ static void hcsr05_read_pulse(uint32_t trig_port, uint16_t trig_pin,
  * FUNCIONES DE UTILIDAD
  * ============================================================================ */
 
-/**
- * @brief Obtiene string descriptivo del error
- */
 static const char* get_error_string(sensor_error_t error)
 {
     switch (error) {
         case SENSOR_OK:              return "OK";
-        case SENSOR_TIMEOUT_START:   return "TIMEOUT START";
-        case SENSOR_TIMEOUT_END:     return "TIMEOUT END";
-        case SENSOR_OUT_OF_RANGE:    return "OUT OF RANGE";
-        case SENSOR_INVALID_PULSE:   return "INVALID PULSE";
-        default:                     return "UNKNOWN";
+        case SENSOR_TIMEOUT_START:   return "NO ECHO";
+        case SENSOR_TIMEOUT_END:     return "TIMEOUT";
+        case SENSOR_OUT_OF_RANGE:    return "OUT RANGE";
+        case SENSOR_INVALID_PULSE:   return "INVALID";
+        default:                     return "ERROR";
     }
+}
+
+/**
+ * @brief Calentamiento del timer para estabilización
+ */
+static void timer_warmup(void)
+{
+    char buf[64];
+    uint32_t elapsed_ms = 0;
+    uint32_t last_update = 0;
+    
+    console_puts("\n*** ESTABILIZANDO TIMER ***\n");
+    console_puts("El timer necesita ~60 segundos para\n");
+    console_puts("generar pulsos precisos de 10 us.\n\n");
+    console_puts("Progreso: 0%\n");
+    
+    uint32_t start_time = timer_get_counter(TIM5);
+    
+    while (elapsed_ms < TIMER_WARMUP_MS) {
+        elapsed_ms = timer_diff(start_time, timer_get_counter(TIM5)) / 1000;
+        
+        /* Actualizar cada segundo */
+        if (elapsed_ms - last_update >= 1000) {
+            last_update = elapsed_ms;
+            uint8_t progress = (elapsed_ms * 100) / TIMER_WARMUP_MS;
+            
+            console_puts("\033[1A\033[2K\r");  // Subir y limpiar línea
+            snprintf(buf, sizeof(buf), "Progreso: %u%% (%lu/%lu seg)\n", 
+                    progress, elapsed_ms/1000, TIMER_WARMUP_MS/1000);
+            console_puts(buf);
+        }
+        
+        delay_ms(100);
+    }
+    
+    timer_ready = 1;
+    console_puts("\n*** TIMER LISTO ***\n\n");
+    delay_ms(500);
 }
 
 /* ============================================================================
@@ -356,109 +355,104 @@ int main(void)
     uint32_t measurement_count = 0;
     sensor_reading_t reading1, reading2;
     
-    /* Configurar reloj del sistema */
+    /* Configuración del sistema */
     clock_setup();
-    
-    /* Configurar GPIO */
     gpio_setup();
-    
-    /* Configurar TIM5 para temporización de 1 µs */
     tim5_setup();
     
-    /* Inicializar consola UART */
+    /* Inicializar consola */
     console_setup(115200);
     
     console_puts("\n==========================================\n");
-    console_puts("  Dual HY-SRF05 - Timer-Based Version\n");
+    console_puts("  HY-SRF05 High-Speed Gesture Control\n");
     console_puts("==========================================\n");
     console_puts("Sensor 1: PB6 (Trig), PB7 (Echo)\n");
     console_puts("Sensor 2: PE2 (Trig), PE3 (Echo)\n");
-    snprintf(buf, sizeof(buf), "Rango: %.0f-%.0f cm\n", MIN_DISTANCE_CM, MAX_DISTANCE_CM);
-    console_puts(buf);
+    console_puts("Rango: 2-450 cm\n");
+    console_puts("Modo: Juego Pong (50 Hz)\n");
+    console_puts("Aritmetica: Entera (sin floats)\n\n");
     
-    /* Mostrar información del timer */
-    console_puts("\nTimer Configuration:\n");
-    snprintf(buf, sizeof(buf), "- TIM5CLK: %lu Hz\n", rcc_apb1_frequency * 2);
-    console_puts(buf);
-    console_puts("- Prescaler: 83\n");
-    console_puts("- Resolution: 1 us\n");
-    console_puts("- Period: 32-bit (4295 sec)\n\n");
-    
-    /* Delay de estabilización inicial */
+    /* Pequeño delay inicial */
     delay_ms(100);
     
-    console_puts("Iniciando mediciones...\n\n");
+    /* Fase de calentamiento del timer */
+    timer_warmup();
     
-    /* Preparar líneas para actualización */
-    console_puts("\n\n\n\n\n\n\n");
+    console_puts("Iniciando mediciones rapidas...\n\n");
+    
+    /* Preparar pantalla para actualización rápida */
+    console_puts("\n\n\n\n\n\n");
+    
+    uint32_t last_display_update = timer_get_counter(TIM5);
     
     while (1) {
         measurement_count++;
         
-        /* Leer sensor 1 */
-        hcsr05_read_pulse(TRIG1_PORT, TRIG1_PIN, ECHO1_PORT, ECHO1_PIN, &reading1);
+        /* Leer ambos sensores rápidamente */
+        hcsr05_read(TRIG1_PORT, TRIG1_PIN, ECHO1_PORT, ECHO1_PIN, &reading1);
         delay_ms(INTER_SENSOR_DELAY_MS);
         
-        /* Leer sensor 2 */
-        hcsr05_read_pulse(TRIG2_PORT, TRIG2_PIN, ECHO2_PORT, ECHO2_PIN, &reading2);
+        hcsr05_read(TRIG2_PORT, TRIG2_PIN, ECHO2_PORT, ECHO2_PIN, &reading2);
         delay_ms(INTER_CYCLE_DELAY_MS);
         
-        /* Mover cursor 7 líneas arriba: ESC[7A */
-        console_puts("\033[7A");
-        
-        /* Línea 1: Contador de mediciones */
-        console_puts("\033[2K\r");
-        snprintf(buf, sizeof(buf), "Medicion #%lu", measurement_count);
-        console_puts(buf);
-        
-        /* Línea 2: Separador */
-        console_puts("\n\033[2K\r");
-        console_puts("----------------------------------------");
-        
-        /* Línea 3: Sensor 1 - Resultado */
-        console_puts("\n\033[2K\r");
-        if (reading1.error == SENSOR_OK) {
-            snprintf(buf, sizeof(buf), "Sensor 1: %.2f cm (%.0f mm) [%lu us]", 
-                    reading1.distance_cm, reading1.distance_cm * 10.0f, reading1.pulse_us);
-        } else {
-            snprintf(buf, sizeof(buf), "Sensor 1: ERROR - %s", get_error_string(reading1.error));
-        }
-        console_puts(buf);
-        
-        /* Línea 4: Sensor 1 - Estado ECHO */
-        console_puts("\n\033[2K\r");
-        snprintf(buf, sizeof(buf), "          ECHO: %s", 
-                gpio_get(ECHO1_PORT, ECHO1_PIN) ? "ALTO (!)" : "BAJO (OK)");
-        console_puts(buf);
-        
-        /* Línea 5: Sensor 2 - Resultado */
-        console_puts("\n\033[2K\r");
-        if (reading2.error == SENSOR_OK) {
-            snprintf(buf, sizeof(buf), "Sensor 2: %.2f cm (%.0f mm) [%lu us]", 
-                    reading2.distance_cm, reading2.distance_cm * 10.0f, reading2.pulse_us);
-        } else {
-            snprintf(buf, sizeof(buf), "Sensor 2: ERROR - %s", get_error_string(reading2.error));
-        }
-        console_puts(buf);
-        
-        /* Línea 6: Sensor 2 - Estado ECHO */
-        console_puts("\n\033[2K\r");
-        snprintf(buf, sizeof(buf), "          ECHO: %s", 
-                gpio_get(ECHO2_PORT, ECHO2_PIN) ? "ALTO (!)" : "BAJO (OK)");
-        console_puts(buf);
-        
-        /* Línea 7: Información adicional */
-        console_puts("\n\033[2K\r");
-        if (reading1.error == SENSOR_OK && reading2.error == SENSOR_OK) {
-            float diff = reading1.distance_cm - reading2.distance_cm;
-            snprintf(buf, sizeof(buf), "Diferencia: %.2f cm", diff);
-        } else {
+        /* Actualizar pantalla solo cada DISPLAY_UPDATE_MS (reducir latencia) */
+        uint32_t now = timer_get_counter(TIM5);
+        if (timer_diff(last_display_update, now) >= (DISPLAY_UPDATE_MS * 1000)) {
+            last_display_update = now;
+            
+            /* Mover cursor arriba */
+            console_puts("\033[6A");
+            
+            /* Línea 1: Info rápida */
+            console_puts("\033[2K\r");
+            snprintf(buf, sizeof(buf), "[#%lu] Freq: ~%u Hz", 
+                    measurement_count, 
+                    1000 / (INTER_SENSOR_DELAY_MS * 2 + INTER_CYCLE_DELAY_MS));
+            console_puts(buf);
+            
+            /* Línea 2: Separador */
+            console_puts("\n\033[2K\r");
+            console_puts("--------------------------------");
+            
+            /* Línea 3: Sensor 1 */
+            console_puts("\n\033[2K\r");
+            if (reading1.error == SENSOR_OK) {
+                snprintf(buf, sizeof(buf), "S1: %4u mm (%3u cm) [%5lu us]", 
+                        reading1.distance_mm, 
+                        reading1.distance_mm / 10,
+                        reading1.pulse_us);
+            } else {
+                snprintf(buf, sizeof(buf), "S1: %s", get_error_string(reading1.error));
+            }
+            console_puts(buf);
+            
+            /* Línea 4: Sensor 2 */
+            console_puts("\n\033[2K\r");
+            if (reading2.error == SENSOR_OK) {
+                snprintf(buf, sizeof(buf), "S2: %4u mm (%3u cm) [%5lu us]", 
+                        reading2.distance_mm,
+                        reading2.distance_mm / 10,
+                        reading2.pulse_us);
+            } else {
+                snprintf(buf, sizeof(buf), "S2: %s", get_error_string(reading2.error));
+            }
+            console_puts(buf);
+            
+            /* Línea 5: Diferencia */
+            console_puts("\n\033[2K\r");
+            if (reading1.error == SENSOR_OK && reading2.error == SENSOR_OK) {
+                int16_t diff = (int16_t)reading1.distance_mm - (int16_t)reading2.distance_mm;
+                snprintf(buf, sizeof(buf), "Diff: %+5d mm", diff);
+            } else {
+                snprintf(buf, sizeof(buf), "                ");
+            }
+            console_puts(buf);
+            
+            /* Línea 6: Timer info */
+            console_puts("\n\033[2K\r");
             snprintf(buf, sizeof(buf), "Timer: %lu us", timer_get_counter(TIM5));
+            console_puts(buf);
         }
-        console_puts(buf);
-        
-        /* Delay antes de siguiente medición */
-        delay_ms(200);
     }
     
     return 0;
