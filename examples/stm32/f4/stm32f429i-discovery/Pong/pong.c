@@ -1,19 +1,15 @@
 /*
  * Pong Game with Dual HC-SR05 Ultrasonic Gesture Control
  * STM32F429I-DISC1
- * 
- * Sensor 1: PB6 (Trigger), PB7 (Echo) - Player 1
+ * * Sensor 1: PB6 (Trigger), PB7 (Echo) - Player 1
  * Sensor 2: PE2 (Trigger), PE3 (Echo) - Player 2
- * 
- * Features:
- * - Dual player ultrasonic control
- * - LCD graphics via SPI
- * - 60-second timer warmup for precision
- * - Real-time gesture-based gameplay
+ * * Modificaciones:
+ * - Implementado filtro Low-Pass (EMA) para eliminar el "jitter" de las paletas.
  */
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <math.h>  // <--- NUEVO: Necesario para funciones matemáticas si se requieren
 #include <libopencm3/stm32/rcc.h>
 #include <libopencm3/stm32/gpio.h>
 #include <libopencm3/stm32/timer.h>
@@ -53,8 +49,8 @@
 #define MAX_SENSOR_DISTANCE_MM  400     // 40 cm maximum
 #define SENSOR_DEADZONE_MM      20      // Ignore small changes
 
-/* Timer warmup (necesario para pulsos precisos de 10 µs) */
-#define TIMER_WARMUP_MS        60000    // 60 segundos
+/* Timer warmup */
+#define TIMER_WARMUP_MS         60000   // 60 segundos
 
 /* ============================================================================
  * GAME CONFIGURATION
@@ -79,6 +75,14 @@
 #define GAME_UPDATE_MS      16      // ~60 FPS
 #define SENSOR_UPDATE_MS    30      // ~33 Hz sensor reading
 
+/* FILTRO DE SUAVIZADO */
+/* * Valor entre 0.0 y 1.0
+ * 0.1 = Muy suave (mucho lag)
+ * 0.3 = Balanceado (juegos)
+ * 1.0 = Sin filtro (nervioso)
+ */
+#define FILTER_ALPHA    0.3f    // <--- NUEVO: Factor de filtro
+
 /* ============================================================================
  * GAME STRUCTURES
  * ============================================================================ */
@@ -89,7 +93,8 @@ typedef struct {
 } Ball;
 
 typedef struct {
-    int16_t y;
+    int16_t y;          // Posición visual (entero)
+    float y_filtered;   // <--- NUEVO: Posición interna suavizada (decimal)
     uint16_t distance_mm;
     uint8_t score;
 } Paddle;
@@ -116,7 +121,7 @@ static volatile uint8_t game_running = 0;
 static volatile uint8_t timer_ready = 0;
 
 /* ============================================================================
- * TIMER FUNCTIONS (from optimized sensor code)
+ * TIMER FUNCTIONS
  * ============================================================================ */
 
 static inline uint32_t timer_diff(uint32_t start, uint32_t end)
@@ -176,7 +181,7 @@ static void gpio_sensor_setup(void)
 }
 
 /* ============================================================================
- * SENSOR READING (Integer arithmetic)
+ * SENSOR READING
  * ============================================================================ */
 
 static uint32_t read_pulse_raw(uint32_t trig_port, uint16_t trig_pin,
@@ -263,7 +268,7 @@ static void timer_warmup(void)
             
             console_puts("\033[1A\033[2K\r");
             snprintf(buf, sizeof(buf), "Progreso: %u%% (%lu/%lu seg)\n",
-                    progress, elapsed/1000, TIMER_WARMUP_MS/1000);
+                     progress, elapsed/1000, TIMER_WARMUP_MS/1000);
             console_puts(buf);
         }
     }
@@ -286,42 +291,54 @@ static void game_init(void)
     
     /* Initialize paddles */
     player1.y = LCD_HEIGHT / 2 - PADDLE_HEIGHT / 2;
+    player1.y_filtered = (float)player1.y; // <--- NUEVO: Inicializar filtro
     player1.score = 0;
     player1.distance_mm = 200;
     
     player2.y = LCD_HEIGHT / 2 - PADDLE_HEIGHT / 2;
+    player2.y_filtered = (float)player2.y; // <--- NUEVO: Inicializar filtro
     player2.score = 0;
     player2.distance_mm = 200;
     
     game_running = 1;
 }
 
+/* * FUNCIÓN MODIFICADA CON FILTRADO
+ */
 static void update_paddle_from_sensor(Paddle *paddle, sensor_reading_t *reading)
 {
     if (reading->error != SENSOR_OK) {
-        return;  // Keep current position if sensor fails
+        return;  // Mantener posición si falla el sensor
     }
     
     paddle->distance_mm = reading->distance_mm;
     
-    /* Map sensor distance to paddle Y position */
-    if (reading->distance_mm < MIN_SENSOR_DISTANCE_MM) {
-        reading->distance_mm = MIN_SENSOR_DISTANCE_MM;
-    }
-    if (reading->distance_mm > MAX_SENSOR_DISTANCE_MM) {
-        reading->distance_mm = MAX_SENSOR_DISTANCE_MM;
-    }
+    /* 1. Clampeo de lectura cruda */
+    uint16_t dist = reading->distance_mm;
+    if (dist < MIN_SENSOR_DISTANCE_MM) dist = MIN_SENSOR_DISTANCE_MM;
+    if (dist > MAX_SENSOR_DISTANCE_MM) dist = MAX_SENSOR_DISTANCE_MM;
     
-    /* Linear mapping: distance -> screen position */
-    uint16_t range = MAX_SENSOR_DISTANCE_MM - MIN_SENSOR_DISTANCE_MM;
-    uint16_t offset = reading->distance_mm - MIN_SENSOR_DISTANCE_MM;
+    /* 2. Calcular posición Objetivo (Target Y) */
+    uint16_t range_sensor = MAX_SENSOR_DISTANCE_MM - MIN_SENSOR_DISTANCE_MM;
+    uint16_t range_screen = LCD_HEIGHT - PADDLE_HEIGHT;
+    uint16_t offset = dist - MIN_SENSOR_DISTANCE_MM;
     
-    paddle->y = (offset * (LCD_HEIGHT - PADDLE_HEIGHT)) / range;
+    float target_y = (float)((offset * range_screen) / range_sensor);
+    
+    /* 3. APLICAR FILTRO DE SUAVIZADO (Low Pass Filter) */
+    /* Nueva_Pos = (Alpha * Objetivo) + ((1 - Alpha) * Pos_Anterior) */
+    paddle->y_filtered = (FILTER_ALPHA * target_y) + ((1.0f - FILTER_ALPHA) * paddle->y_filtered);
+    
+    /* 4. Convertir a coordenadas de pantalla */
+    int16_t final_y = (int16_t)paddle->y_filtered;
     
     /* Clamp to screen bounds */
-    if (paddle->y < 0) paddle->y = 0;
-    if (paddle->y > LCD_HEIGHT - PADDLE_HEIGHT) {
-        paddle->y = LCD_HEIGHT - PADDLE_HEIGHT;
+    if (final_y < 0) final_y = 0;
+    if (final_y > range_screen) final_y = range_screen;
+    
+    /* 5. Aplicar pequeña Deadzone visual (1 pixel) para evitar parpadeo */
+    if (abs(paddle->y - final_y) > 1) {
+        paddle->y = final_y;
     }
 }
 
