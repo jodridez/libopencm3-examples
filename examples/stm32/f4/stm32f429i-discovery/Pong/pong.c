@@ -5,11 +5,12 @@
  * Sensor 2: PE2 (Trigger), PE3 (Echo) - Player 2
  * * Modificaciones:
  * - Implementado filtro Low-Pass (EMA) para eliminar el "jitter" de las paletas.
+ * - Añadida funcionalidad de REINICIO de juego al pulsar el botón USER (B1/PA0).
  */
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <math.h>  // <--- NUEVO: Necesario para funciones matemáticas si se requieren
+#include <math.h>
 #include <libopencm3/stm32/rcc.h>
 #include <libopencm3/stm32/gpio.h>
 #include <libopencm3/stm32/timer.h>
@@ -53,6 +54,13 @@
 #define TIMER_WARMUP_MS         60000   // 60 segundos
 
 /* ============================================================================
+ * BUTTON CONFIGURATION (User Button - B1/PA0)
+ * ============================================================================ */
+
+#define USER_BUTTON_PORT GPIOA
+#define USER_BUTTON_PIN  GPIO0
+
+/* ============================================================================
  * GAME CONFIGURATION
  * ============================================================================ */
 
@@ -73,15 +81,10 @@
 
 /* Update rates */
 #define GAME_UPDATE_MS      16      // ~60 FPS
-#define SENSOR_UPDATE_MS    30      // ~33 Hz sensor reading
+#define SENSOR_UPDATE_MS    16 //30      // ~33 Hz sensor reading
 
 /* FILTRO DE SUAVIZADO */
-/* * Valor entre 0.0 y 1.0
- * 0.1 = Muy suave (mucho lag)
- * 0.3 = Balanceado (juegos)
- * 1.0 = Sin filtro (nervioso)
- */
-#define FILTER_ALPHA    0.3f    // <--- NUEVO: Factor de filtro
+#define FILTER_ALPHA    0.3f    // Factor de filtro
 
 /* ============================================================================
  * GAME STRUCTURES
@@ -94,7 +97,7 @@ typedef struct {
 
 typedef struct {
     int16_t y;          // Posición visual (entero)
-    float y_filtered;   // <--- NUEVO: Posición interna suavizada (decimal)
+    float y_filtered;   // Posición interna suavizada (decimal)
     uint16_t distance_mm;
     uint8_t score;
 } Paddle;
@@ -142,7 +145,7 @@ static inline void delay_ms(uint32_t ms)
 }
 
 /* ============================================================================
- * SENSOR INITIALIZATION
+ * HARDWARE INITIALIZATION
  * ============================================================================ */
 
 static void tim5_setup(void)
@@ -178,6 +181,15 @@ static void gpio_sensor_setup(void)
     gpio_set_output_options(TRIG2_PORT, GPIO_OTYPE_PP, GPIO_OSPEED_50MHZ, TRIG2_PIN);
     gpio_clear(TRIG2_PORT, TRIG2_PIN);
     gpio_mode_setup(ECHO2_PORT, GPIO_MODE_INPUT, GPIO_PUPD_PULLDOWN, ECHO2_PIN);
+}
+
+// NUEVA FUNCIÓN: Configuración del botón de usuario
+static void gpio_button_setup(void)
+{
+    rcc_periph_clock_enable(RCC_GPIOA);
+
+    /* User Button (B1) on PA0. Input with Pull-down */
+    gpio_mode_setup(USER_BUTTON_PORT, GPIO_MODE_INPUT, GPIO_PUPD_PULLDOWN, USER_BUTTON_PIN);
 }
 
 /* ============================================================================
@@ -286,29 +298,28 @@ static void game_init(void)
     /* Initialize ball */
     ball.x = LCD_WIDTH / 2 - BALL_SIZE / 2;
     ball.y = LCD_HEIGHT / 2 - BALL_SIZE / 2;
-    ball.vx = BALL_SPEED_X;
+    // La dirección inicial puede ser aleatoria o fija
+    ball.vx = (rand() % 2 == 0) ? BALL_SPEED_X : -BALL_SPEED_X;
     ball.vy = BALL_SPEED_Y;
     
     /* Initialize paddles */
     player1.y = LCD_HEIGHT / 2 - PADDLE_HEIGHT / 2;
-    player1.y_filtered = (float)player1.y; // <--- NUEVO: Inicializar filtro
+    player1.y_filtered = (float)player1.y;
     player1.score = 0;
     player1.distance_mm = 200;
     
     player2.y = LCD_HEIGHT / 2 - PADDLE_HEIGHT / 2;
-    player2.y_filtered = (float)player2.y; // <--- NUEVO: Inicializar filtro
+    player2.y_filtered = (float)player2.y;
     player2.score = 0;
     player2.distance_mm = 200;
     
     game_running = 1;
 }
 
-/* * FUNCIÓN MODIFICADA CON FILTRADO
- */
 static void update_paddle_from_sensor(Paddle *paddle, sensor_reading_t *reading)
 {
     if (reading->error != SENSOR_OK) {
-        return;  // Mantener posición si falla el sensor
+        return;
     }
     
     paddle->distance_mm = reading->distance_mm;
@@ -326,7 +337,6 @@ static void update_paddle_from_sensor(Paddle *paddle, sensor_reading_t *reading)
     float target_y = (float)((offset * range_screen) / range_sensor);
     
     /* 3. APLICAR FILTRO DE SUAVIZADO (Low Pass Filter) */
-    /* Nueva_Pos = (Alpha * Objetivo) + ((1 - Alpha) * Pos_Anterior) */
     paddle->y_filtered = (FILTER_ALPHA * target_y) + ((1.0f - FILTER_ALPHA) * paddle->y_filtered);
     
     /* 4. Convertir a coordenadas de pantalla */
@@ -447,12 +457,17 @@ static void game_render(void)
         gfx_fillRoundRect(30, LCD_HEIGHT/2 - 30, 180, 60, 10, LCD_BLUE);
         gfx_setTextSize(2);
         gfx_setTextColor(LCD_YELLOW, LCD_BLUE);
-        gfx_setCursor(50, LCD_HEIGHT/2 - 10);
+        gfx_setCursor(35, LCD_HEIGHT/2 - 10);
         if (player1.score > player2.score) {
             gfx_puts("PLAYER 1 WINS!");
         } else {
             gfx_puts("PLAYER 2 WINS!");
         }
+        
+        gfx_setTextSize(1);
+        gfx_setTextColor(LCD_WHITE, LCD_BLACK);
+        gfx_setCursor(5, LCD_HEIGHT - 10);
+        gfx_puts("Presione BOTON USER para reiniciar");
     }
     
     /* Show frame */
@@ -483,6 +498,7 @@ int main(void)
     /* Initialize hardware */
     gpio_sensor_setup();
     tim5_setup();
+    gpio_button_setup(); // Configuración del botón USER (PA0)
     
     /* Timer warmup */
     timer_warmup();
@@ -528,6 +544,17 @@ int main(void)
         } else if (!game_running) {
             /* Game over - wait for restart or show final screen */
             game_render();
+            
+            /* Lógica de REINICIO al pulsar el botón USER (B1/PA0) */
+            if (gpio_get(USER_BUTTON_PORT, USER_BUTTON_PIN) != 0) {
+                // Debounce simple
+                delay_ms(50);
+                if (gpio_get(USER_BUTTON_PORT, USER_BUTTON_PIN) != 0) {
+                    console_puts("*** REINICIANDO JUEGO ***\n\n");
+                    game_init(); // Reinicia el juego
+                    game_render();
+                }
+            }
             delay_ms(100);
         }
     }
