@@ -60,6 +60,16 @@
 #define SOUND_SPEED_CM_PER_US  0.0343f
 #define US_PER_CM              58.24f   // 1 / (0.0343 / 2)
 
+/* FACTOR DE CORRECCIÓN DE CALIBRACIÓN
+ * Si las mediciones son consistentemente incorrectas, ajusta este valor:
+ * - Si mide MÁS de lo real: aumenta este valor (ej: 1.1, 1.2)
+ * - Si mide MENOS de lo real: disminuye este valor (ej: 0.9, 0.8)
+ * 
+ * Ejemplo: Si mide 252cm cuando son 16.8cm reales:
+ * Factor = 252 / 16.8 = 15.0 (el timer va 15x más rápido de lo pensado)
+ */
+#define CALIBRATION_FACTOR  1     //(16.8f / 252.0f)
+
 /* Filtrado de mediciones */
 #define MEDIAN_FILTER_SIZE     3
 #define MAX_NOISE_CM           5.0f     // Máxima variación aceptable entre lecturas
@@ -172,16 +182,31 @@ static void hcsr05_setup(void)
     /* Configurar TIM5: temporizador de 32-bit a 1 MHz (1 µs por tick) */
     timer_disable_counter(TIM5);
     
-    /* APB1 en STM32F429 @ 180 MHz: APB1=45MHz, TIMxCLK=90MHz */
-    uint32_t apb1_freq = rcc_apb1_frequency;
-    /* Si APB1 prescaler != 1, entonces TIMxCLK = APB1 * 2 */
+    /* 
+     * CALIBRACIÓN CRÍTICA DEL TIMER:
+     * STM32F429 @ 180 MHz:
+     * - SYSCLK = 180 MHz
+     * - APB1 = SYSCLK / 4 = 45 MHz
+     * - TIM5CLK = APB1 * 2 = 90 MHz (cuando APB1 prescaler > 1)
+     * 
+     * Para obtener 1 MHz (1 µs/tick):
+     * Prescaler = (TIM5CLK / 1000000) - 1 = 89
+     */
+    
+    uint32_t tim_clock = rcc_apb1_frequency;
+    
+    /* Verificar si APB1 prescaler está activo */
     uint32_t cfgr = RCC_CFGR;
-    uint32_t ppre1 = (cfgr >> 10) & 0x7; // Bits 10-12 para PPRE1
-    if (ppre1 != 0) {  // Si no es división por 1, multiplicar por 2
-        apb1_freq *= 2;
+    uint32_t ppre1 = (cfgr >> 10) & 0x7;
+    
+    /* Si APB1 prescaler > 1, entonces TIMxCLK = APB1 * 2 */
+    if (ppre1 >= 4) {  // PPRE1 >= 0b100 significa división >= 2
+        tim_clock *= 2;
     }
-    timer_frequency = 1000000UL;
-    timer_set_prescaler(TIM5, (apb1_freq / timer_frequency) - 1);
+    
+    timer_frequency = 1000000UL;  // 1 MHz objetivo
+    uint32_t prescaler = (tim_clock / timer_frequency) - 1;
+    timer_set_prescaler(TIM5, prescaler);
     
     timer_set_period(TIM5, 0xFFFFFFFF);
     timer_disable_preload(TIM5);
@@ -191,6 +216,15 @@ static void hcsr05_setup(void)
     
     /* Pequeño delay para estabilización inicial */
     delay_ms(50);
+    
+    /* Verificación de calibración del timer */
+    uint32_t cal_start = timer_get_counter(TIM5);
+    for (volatile uint32_t i = 0; i < 1000000; i++);  // Loop conocido
+    uint32_t cal_end = timer_get_counter(TIM5);
+    uint32_t cal_ticks = timer_diff(cal_start, cal_end);
+    
+    /* Guardar valor de calibración para diagnóstico */
+    timer_frequency = cal_ticks;  // Ticks reales por loop de 1M iteraciones
 }
 
 /* ============================================================================
@@ -271,7 +305,7 @@ static void hcsr05_read_pulse(uint32_t trig_port, uint16_t trig_pin,
     }
     
     /* Calcular distancia */
-    reading->distance_cm = (float)reading->pulse_us / US_PER_CM;
+    reading->distance_cm = ((float)reading->pulse_us / US_PER_CM) * CALIBRATION_FACTOR;
     
     /* Verificar rango físico del sensor */
     if (reading->distance_cm < MIN_DISTANCE_CM || 
@@ -303,7 +337,7 @@ static int compare_float(const void *a, const void *b)
  * en main() por:
  *   float dist1 = hcsr05_get_distance_filtered(TRIG1_PORT, TRIG1_PIN, ECHO1_PORT, ECHO1_PIN, 3);
  */
-#if 1  // Deshabilitado - habilitar si deseas usar filtro de mediana
+#if 0  // Deshabilitado - habilitar si deseas usar filtro de mediana
 static float hcsr05_get_distance_filtered(uint32_t trig_port, uint16_t trig_pin,
                                           uint32_t echo_port, uint16_t echo_pin,
                                           uint8_t samples)
@@ -384,7 +418,16 @@ int main(void)
     console_puts("Sensor 2: PE2 (Trig), PE3 (Echo)\n");
     snprintf(buf, sizeof(buf), "Rango: %.0f-%.0f cm\n", MIN_DISTANCE_CM, MAX_DISTANCE_CM);
     console_puts(buf);
-    snprintf(buf, sizeof(buf), "Timer: %lu Hz\n\n", timer_frequency);
+    snprintf(buf, sizeof(buf), "TIM5 Calibracion: %lu ticks/1M-loops\n", timer_frequency);
+    console_puts(buf);
+    
+    /* Calcular frecuencia real del timer */
+    uint32_t real_freq = rcc_apb1_frequency;
+    uint32_t cfgr_check = RCC_CFGR;
+    uint32_t ppre1_check = (cfgr_check >> 10) & 0x7;
+    if (ppre1_check >= 4) real_freq *= 2;
+    snprintf(buf, sizeof(buf), "APB1: %lu Hz, PPRE1: 0x%lx, TIM5CLK: %lu MHz\n\n", 
+             rcc_apb1_frequency, ppre1_check, real_freq / 1000000UL);
     console_puts(buf);
     
     /* Inicializar hardware */
