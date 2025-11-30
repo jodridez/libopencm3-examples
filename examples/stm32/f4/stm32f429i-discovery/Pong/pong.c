@@ -51,7 +51,7 @@
 #define SENSOR_DEADZONE_MM      20      // Ignore small changes
 
 /* Timer warmup */
-#define TIMER_WARMUP_MS         60000   // 60 segundos
+#define TIMER_WARMUP_MS         0 //60000   // 60 segundos
 
 /* ============================================================================
  * BUTTON CONFIGURATION (User Button - B1/PA0)
@@ -71,20 +71,20 @@
 #define PADDLE_WIDTH    6
 #define PADDLE_HEIGHT   50
 #define BALL_SIZE       8
-#define PADDLE_OFFSET   15      // Distance from edge
+#define PADDLE_OFFSET   0      // Distance from edge
 
 /* Game physics */
-#define BALL_SPEED_X    3
-#define BALL_SPEED_Y    2
-#define MAX_BALL_SPEED  6
-#define WINNING_SCORE   5
+#define BALL_SPEED_X    12//3
+#define BALL_SPEED_Y    12//2
+#define MAX_BALL_SPEED  24//6
+#define WINNING_SCORE   1
 
 /* Update rates */
 #define GAME_UPDATE_MS      16      // ~60 FPS
 #define SENSOR_UPDATE_MS    16 //30      // ~33 Hz sensor reading
 
 /* FILTRO DE SUAVIZADO */
-#define FILTER_ALPHA    0.3f    // Factor de filtro
+#define FILTER_ALPHA    0.1f    // Factor de filtro
 
 /* ============================================================================
  * GAME STRUCTURES
@@ -454,20 +454,20 @@ static void game_render(void)
     
     /* Draw game over message */
     if (!game_running) {
-        gfx_fillRoundRect(30, LCD_HEIGHT/2 - 30, 180, 60, 10, LCD_BLUE);
+        gfx_fillRoundRect(9, LCD_HEIGHT/2 - 30, 220, 60, 10, LCD_BLUE);
         gfx_setTextSize(2);
         gfx_setTextColor(LCD_YELLOW, LCD_BLUE);
-        gfx_setCursor(35, LCD_HEIGHT/2 - 10);
+        gfx_setCursor(10, LCD_HEIGHT/2 - 10);
         if (player1.score > player2.score) {
-            gfx_puts("PLAYER 1 WINS!");
+            gfx_puts("PLAYER 1 WINS");
         } else {
-            gfx_puts("PLAYER 2 WINS!");
+            gfx_puts("PLAYER 2 WINS");
         }
         
         gfx_setTextSize(1);
         gfx_setTextColor(LCD_WHITE, LCD_BLACK);
-        gfx_setCursor(5, LCD_HEIGHT - 10);
-        gfx_puts("Presione BOTON USER para reiniciar");
+        gfx_setCursor(LCD_WIDTH/4-10, LCD_HEIGHT - 10);
+        gfx_puts("BOTON USER reinicia");
     }
     
     /* Show frame */
