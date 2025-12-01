@@ -6,6 +6,7 @@
  * * Modificaciones:
  * - Implementado filtro Low-Pass (EMA) para eliminar el "jitter" de las paletas.
  * - Añadida funcionalidad de REINICIO de juego al pulsar el botón USER (B1/PA0).
+ * - Añadida barra de carga gráfica durante el warmup
  */
 
 #include <stdio.h>
@@ -70,7 +71,7 @@
 /* Game objects */
 #define PADDLE_WIDTH    6
 #define PADDLE_HEIGHT   50
-#define BALL_SIZE       8
+#define BALL_SIZE       20//8
 #define PADDLE_OFFSET   0      // Distance from edge
 
 /* Game physics */
@@ -253,40 +254,154 @@ static void read_sensor(uint32_t trig_port, uint16_t trig_pin,
 }
 
 /* ============================================================================
- * TIMER WARMUP
+ * TIMER WARMUP CON BARRA DE CARGA GRÁFICA
  * ============================================================================ */
 
 static void timer_warmup(void)
 {
+    //const uint32_t TIMER_WARMUP_MS = 52000;  // 52 segundos
     char buf[64];
     
     console_puts("\n========================================\n");
-    console_puts("  TIMER WARMUP - 60 SECONDS\n");
+    console_puts("  TIMER WARMUP - 52 SEGUNDOS\n");
     console_puts("========================================\n");
     console_puts("El timer necesita estabilizarse para\n");
     console_puts("generar pulsos precisos de 10 us.\n\n");
     console_puts("Preparando sensores...\n\n");
     console_puts("Progreso: 0%\n");
     
+    // Inicializar LCD y gráficos para mostrar barra de carga
+    console_puts("Inicializando SDRAM...\n");
+    sdram_init();
+    
+    console_puts("Inicializando LCD...\n");
+    lcd_spi_init();
+    
+    console_puts("Inicializando graficos...\n");
+    gfx_init(lcd_draw_pixel, LCD_WIDTH, LCD_HEIGHT);
+    
     uint32_t start = mtime();
-    uint32_t last_update = 0;
+    uint32_t last_console_update = 0;
+    uint32_t last_lcd_update = 0;
+    
+    // Configuración de la barra de progreso
+    const uint16_t bar_width = 200;
+    const uint16_t bar_height = 25;
+    const uint16_t bar_x = (LCD_WIDTH - bar_width) / 2;
+    const uint16_t bar_y = LCD_HEIGHT / 2;
     
     while ((mtime() - start) < TIMER_WARMUP_MS) {
         uint32_t elapsed = mtime() - start;
+        uint8_t progress = (elapsed * 100) / TIMER_WARMUP_MS;
         
-        if (elapsed - last_update >= 1000) {
-            last_update = elapsed;
-            uint8_t progress = (elapsed * 100) / TIMER_WARMUP_MS;
-            
+        // Actualizar consola cada segundo
+        if (elapsed - last_console_update >= 1000) {
+            last_console_update = elapsed;
             console_puts("\033[1A\033[2K\r");
-            snprintf(buf, sizeof(buf), "Progreso: %u%% (%lu/%lu seg)\n",
+            snprintf(buf, sizeof(buf), "Progreso: %u%% (%lu/%u seg)\n",
                      progress, elapsed/1000, TIMER_WARMUP_MS/1000);
             console_puts(buf);
         }
+        
+        // Actualizar LCD cada 100ms para animación suave
+        if (elapsed - last_lcd_update >= 100) {
+            last_lcd_update = elapsed;
+            
+            // Limpiar pantalla
+            gfx_fillScreen(LCD_BLACK);
+            
+            // Título
+            gfx_setTextSize(2);
+            gfx_setTextColor(LCD_WHITE, LCD_BLACK);
+            gfx_setCursor(LCD_WIDTH/6, 20);
+            gfx_puts("INICIANDO");
+
+            gfx_setTextSize(2);
+            gfx_setTextColor(LCD_WHITE, LCD_BLACK);
+            gfx_setCursor(LCD_WIDTH/8, 40);
+            gfx_puts("JUEGO PONG");
+
+            
+            // Información de progreso
+            gfx_setTextSize(1);
+            gfx_setCursor(70, 90);
+            snprintf(buf, sizeof(buf), "%u%% Completado", progress);
+            gfx_puts(buf);
+            
+            gfx_setCursor(70, 110);
+            snprintf(buf, sizeof(buf), "Tiempo: %lu/%u s", elapsed/1000, TIMER_WARMUP_MS/1000);
+            gfx_puts(buf);
+            
+            // Dibujar marco de la barra de progreso
+            gfx_drawRect(bar_x - 2, bar_y - 2, bar_width + 4, bar_height + 4, LCD_WHITE);
+            
+            // Dibujar barra de progreso
+            uint16_t progress_width = (progress * bar_width) / 100;
+            gfx_fillRect(bar_x, bar_y, progress_width, bar_height, LCD_GREEN);
+            
+            // Dibujar porcentaje en la barra
+            //if (progress_width) { // Solo mostrar texto si hay espacio suficiente
+                gfx_setTextSize(1);
+                gfx_setTextColor(LCD_BLACK, LCD_GREEN);
+                gfx_setCursor(bar_x+bar_width/2, bar_y + 8);
+                snprintf(buf, sizeof(buf), "%u%%", progress);
+                gfx_puts(buf);
+            //}
+            
+            // Indicadores de sensores
+            gfx_setTextSize(1);
+            gfx_setTextColor(LCD_CYAN, LCD_BLACK);
+            gfx_setCursor(10, 200);
+            gfx_puts("Sensor 1: PB6/PB7 (Player 1)");
+            gfx_setCursor(10, 215);
+            gfx_puts("Sensor 2: PE2/PE3 (Player 2)");
+            
+            // Mensaje de estado
+            gfx_setTextColor(LCD_YELLOW, LCD_BLACK);
+            gfx_setCursor(30, LCD_HEIGHT-15);
+            
+            gfx_puts("Iniciando temporizador...");
+  
+            
+            // Mostrar frame
+            lcd_show_frame();
+        }
     }
+    
+    // Pantalla final de calibración completada
+    gfx_fillScreen(LCD_BLACK);
+    gfx_setTextSize(2);
+    gfx_setTextColor(LCD_GREEN, LCD_BLACK);
+    gfx_setCursor(LCD_WIDTH/6, 100);
+    gfx_puts("CALIBRACION");
+    gfx_setCursor(LCD_WIDTH/6, 130);
+    gfx_puts("COMPLETADA!");
+    
+    gfx_setTextSize(1);
+    gfx_setTextColor(LCD_WHITE, LCD_BLACK);
+    gfx_setCursor(LCD_WIDTH/8, 180);
+    gfx_puts("Sensores listos para usar");
+    
+    gfx_setTextColor(LCD_YELLOW, LCD_BLACK);
+    gfx_setCursor(LCD_WIDTH/8, LCD_HEIGHT-30);
+    gfx_puts("BOTTON USER para iniciar");
+    
+    lcd_show_frame();
     
     timer_ready = 1;
     console_puts("\n*** SENSORES LISTOS ***\n\n");
+    
+    // MODIFICADO: Esperar a que el usuario presione el botón USER en lugar de una tecla
+    console_puts("Presione BOTON USER para iniciar el juego...\n");
+    while (gpio_get(USER_BUTTON_PORT, USER_BUTTON_PIN) == 0) {
+        delay_ms(100);
+    }
+    
+    // Debounce del botón
+    delay_ms(50);
+    while (gpio_get(USER_BUTTON_PORT, USER_BUTTON_PIN) != 0) {
+        delay_ms(100);
+    }
 }
 
 /* ============================================================================
@@ -501,19 +616,8 @@ int main(void)
     console_puts("Player 2: Sensor 2 (PE2/PE3)\n");
     console_puts("Primer jugador a 5 puntos gana!\n\n");
     
-
-    
-    /* Timer warmup */
+    /* Timer warmup con barra de carga gráfica */
     timer_warmup();
-    
-    console_puts("Inicializando SDRAM...\n");
-    sdram_init();
-    
-    console_puts("Inicializando LCD...\n");
-    lcd_spi_init();
-    
-    console_puts("Inicializando graficos...\n");
-    gfx_init(lcd_draw_pixel, LCD_WIDTH, LCD_HEIGHT);
     
     console_puts("\n*** JUEGO INICIADO ***\n\n");
     
