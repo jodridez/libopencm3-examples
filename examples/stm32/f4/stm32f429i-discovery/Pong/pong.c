@@ -71,7 +71,7 @@
 /* Game objects */
 #define PADDLE_WIDTH    6
 #define PADDLE_HEIGHT   50
-#define BALL_SIZE       20//8
+#define BALL_SIZE       8
 #define PADDLE_OFFSET   0      // Distance from edge
 
 /* Game physics */
@@ -632,16 +632,25 @@ int main(void)
         /* Update sensors at ~33 Hz */
         if (now - last_sensor_update >= SENSOR_UPDATE_MS) {
             last_sensor_update = now;
-            
-            /* Read both sensors */
-            read_sensor(TRIG1_PORT, TRIG1_PIN, ECHO1_PORT, ECHO1_PIN, &reading1);
-            delay_ms(20);  // Small delay between sensors
-            read_sensor(TRIG2_PORT, TRIG2_PIN, ECHO2_PORT, ECHO2_PIN, &reading2);
-            
-            /* Update paddle positions */
+
+            static uint8_t flip = 0;
+
+            if (!flip) {
+                read_sensor(TRIG1_PORT, TRIG1_PIN, ECHO1_PORT, ECHO1_PIN, &reading1);
+                delay_us(200);
+                read_sensor(TRIG2_PORT, TRIG2_PIN, ECHO2_PORT, ECHO2_PIN, &reading2);
+            } else {
+                read_sensor(TRIG2_PORT, TRIG2_PIN, ECHO2_PORT, ECHO2_PIN, &reading2);
+                delay_us(200);
+                read_sensor(TRIG1_PORT, TRIG1_PIN, ECHO1_PORT, ECHO1_PIN, &reading1);
+            }
+
+            flip = !flip;
+
             update_paddle_from_sensor(&player1, &reading1);
             update_paddle_from_sensor(&player2, &reading2);
         }
+
         
         /* Update game logic at ~60 Hz */
         if (game_running && now - last_game_update >= GAME_UPDATE_MS) {
