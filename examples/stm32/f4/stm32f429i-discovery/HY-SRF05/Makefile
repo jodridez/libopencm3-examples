@@ -1,6 +1,6 @@
-OBJS = sdram.o clock.o console.o lcd-spi.o gfx.o
+OBJS =  clock.o console.o
 
-BINARY = hcsr05
+BINARY = HY-SRF05
 
 # we use sin/cos from the library
 LDLIBS += -lm

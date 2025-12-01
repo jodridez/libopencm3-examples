@@ -332,7 +332,7 @@ static void timer_warmup(void)
             uint8_t progress = (elapsed_ms * 100) / TIMER_WARMUP_MS;
             
             console_puts("\033[1A\033[2K\r");  // Subir y limpiar línea
-            snprintf(buf, sizeof(buf), "Progreso: %u%% (%lu/%lu seg)\n", 
+            snprintf(buf, sizeof(buf), "Progreso: %u%% (%lu/%u seg)\n", 
                     progress, elapsed_ms/1000, TIMER_WARMUP_MS/1000);
             console_puts(buf);
         }
