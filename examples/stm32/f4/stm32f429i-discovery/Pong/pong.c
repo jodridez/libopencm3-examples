@@ -48,10 +48,10 @@
 /* Distance mapping for paddles */
 #define MIN_SENSOR_DISTANCE_MM  50      // 5 cm minimum
 #define MAX_SENSOR_DISTANCE_MM  400     // 40 cm maximum
-#define SENSOR_DEADZONE_MM      20      // Ignore small changes
+#define SENSOR_DEADZONE_MM      100      // Ignore small changes
 
 /* Timer warmup */
-#define TIMER_WARMUP_MS         0 //60000   // 60 segundos
+#define TIMER_WARMUP_MS         52000//60000   // 60 segundos
 
 /* ============================================================================
  * BUTTON CONFIGURATION (User Button - B1/PA0)
@@ -74,17 +74,17 @@
 #define PADDLE_OFFSET   0      // Distance from edge
 
 /* Game physics */
-#define BALL_SPEED_X    12//3
-#define BALL_SPEED_Y    12//2
-#define MAX_BALL_SPEED  24//6
-#define WINNING_SCORE   1
+#define BALL_SPEED_X    6//3
+#define BALL_SPEED_Y    4//2
+#define MAX_BALL_SPEED  12//6
+#define WINNING_SCORE   5
 
 /* Update rates */
 #define GAME_UPDATE_MS      16      // ~60 FPS
-#define SENSOR_UPDATE_MS    16 //30      // ~33 Hz sensor reading
+#define SENSOR_UPDATE_MS    30      // ~33 Hz sensor reading
 
 /* FILTRO DE SUAVIZADO */
-#define FILTER_ALPHA    0.1f    // Factor de filtro
+#define FILTER_ALPHA    0.5f    // Factor de filtro
 
 /* ============================================================================
  * GAME STRUCTURES
