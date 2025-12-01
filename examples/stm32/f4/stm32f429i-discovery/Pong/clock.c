@@ -1,32 +1,6 @@
-/*
- * This file is part of the libopencm3 project.
- *
- * Copyright (C) 2014 Chuck McManis <cmcmanis@mcmanis.com>
- *
- * This library is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This library is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this library.  If not, see <http://www.gnu.org/licenses/>.
- */
-
-/*
- * Now this is just the clock setup code from systick-blink as it is the
- * transferrable part.
- */
-
 #include <libopencm3/stm32/rcc.h>
 #include <libopencm3/cm3/nvic.h>
 #include <libopencm3/cm3/systick.h>
-
-/* Common function descriptions */
 #include "clock.h"
 
 /* milliseconds since boot */
@@ -35,39 +9,50 @@ static volatile uint32_t system_millis;
 /* Called when systick fires */
 void sys_tick_handler(void)
 {
-	system_millis++;
+    system_millis++;
 }
 
 /* simple sleep for delay milliseconds */
 void msleep(uint32_t delay)
 {
-	uint32_t wake = system_millis + delay;
-	while (wake > system_millis);
+    uint32_t wake = system_millis + delay;
+    while (wake > system_millis);
 }
 
 /* Getter function for the current time */
 uint32_t mtime(void)
 {
-	return system_millis;
+    return system_millis;
 }
 
 /*
- * clock_setup(void)
- *
- * This function sets up both the base board clock rate
- * and a 1khz "system tick" count. The SYSTICK counter is
- * a standard feature of the Cortex-M series.
+ * Robust clock_setup:
+ * - Start SysTick right away using HSI (16 MHz) to ensure mtime() runs
+ * - Then configure PLL (may block or take time)
+ * - After PLL is up, reconfigure SysTick for 168 MHz (1 ms)
  */
 void clock_setup(void)
 {
-	/* Base board frequency, set to 168Mhz */
-	rcc_clock_setup_pll(&rcc_hse_8mhz_3v3[RCC_CLOCK_3V3_168MHZ]);
+    /* --- 1) Start SysTick immediately using HSI (16 MHz) so mtime() works now --- */
+    const uint32_t HSI_FREQ_HZ = 16000000UL;
+    uint32_t reload_hsi = (HSI_FREQ_HZ / 1000U) - 1U; /* ticks for 1 ms at HSI */
+    systick_set_reload(reload_hsi);
+    systick_set_clocksource(STK_CSR_CLKSOURCE_AHB); /* uses core/AHB (currently HSI) */
+    systick_counter_enable();
+    systick_interrupt_enable();
 
-	/* clock rate / 168000 to get 1mS interrupt rate */
-	systick_set_reload(168000);
-	systick_set_clocksource(STK_CSR_CLKSOURCE_AHB);
-	systick_counter_enable();
+    /* small pause to let first ticks occur (not required but avoids races) */
+    for (volatile int i = 0; i < 1000; ++i) __asm__("nop");
 
-	/* this done last */
-	systick_interrupt_enable();
+    /* --- 2) Now set system clock to 168 MHz (this may internally wait/lock) --- */
+    rcc_clock_setup_pll(&rcc_hse_8mhz_3v3[RCC_CLOCK_3V3_168MHZ]);
+
+    /* --- 3) SysTick must be reconfigured for the new AHB frequency (168 MHz) --- */
+    const uint32_t AHB_168MHZ = 168000000UL;
+    uint32_t reload_ahb = (AHB_168MHZ / 1000U) - 1U; /* ticks for 1 ms at 168 MHz */
+    systick_set_reload(reload_ahb);
+    /* clocksource already set to AHB; counter and interrupt remain enabled */
+
+    /* optional short delay to allow SysTick to stabilize at new rate */
+    for (volatile int i = 0; i < 1000; ++i) __asm__("nop");
 }

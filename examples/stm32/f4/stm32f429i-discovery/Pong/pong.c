@@ -486,6 +486,12 @@ int main(void)
     
     /* System initialization */
     clock_setup();
+
+    /* Initialize hardware */
+    gpio_sensor_setup();
+    gpio_button_setup(); // Configuración del botón USER (PA0)
+    tim5_setup();
+
     console_setup(115200);
     
     console_puts("\n========================================\n");
@@ -495,10 +501,7 @@ int main(void)
     console_puts("Player 2: Sensor 2 (PE2/PE3)\n");
     console_puts("Primer jugador a 5 puntos gana!\n\n");
     
-    /* Initialize hardware */
-    gpio_sensor_setup();
-    tim5_setup();
-    gpio_button_setup(); // Configuración del botón USER (PA0)
+
     
     /* Timer warmup */
     timer_warmup();
