@@ -26,17 +26,16 @@
  * SENSOR CONFIGURATION
  * ============================================================================ */
 
-/* Sensor 1 - Player 1 (Left) */
-#define TRIG1_PORT GPIOB
-#define TRIG1_PIN  GPIO6
-#define ECHO1_PORT GPIOB
-#define ECHO1_PIN  GPIO7
+/* SENSORES EN PUERTO D (LIBRE DE CONFLICTOS) */
+#define TRIG1_PORT GPIOD
+#define TRIG1_PIN  GPIO4
+#define ECHO1_PORT GPIOD
+#define ECHO1_PIN  GPIO5
 
-/* Sensor 2 - Player 2 (Right) */
-#define TRIG2_PORT GPIOE
-#define TRIG2_PIN  GPIO2
-#define ECHO2_PORT GPIOE
-#define ECHO2_PIN  GPIO3
+#define TRIG2_PORT GPIOD
+#define TRIG2_PIN  GPIO6
+#define ECHO2_PORT GPIOD
+#define ECHO2_PIN  GPIO7
 
 /* Sensor timing constants */
 #define TIMEOUT_ECHO_START_US  15000UL
@@ -197,8 +196,8 @@ static void tim5_setup(void)
 
 static void gpio_sensor_setup(void)
 {
-    rcc_periph_clock_enable(RCC_GPIOB);
-    rcc_periph_clock_enable(RCC_GPIOE);
+    rcc_periph_clock_enable(RCC_GPIOD);
+    //rcc_periph_clock_enable(RCC_GPIOE);
     rcc_periph_clock_enable(RCC_TIM5);
     
     /* Sensor 1 */
