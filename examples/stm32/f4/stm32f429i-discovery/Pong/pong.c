@@ -381,9 +381,9 @@ static void timer_warmup(void)
             gfx_setTextSize(1);
             gfx_setTextColor(LCD_CYAN, LCD_BLACK);
             gfx_setCursor(10, 200);
-            gfx_puts("Sensor 1: PB6/PB7 (Player 1)");
+            gfx_puts("Sensor 1: PD4/PD65(Player 1)");
             gfx_setCursor(10, 215);
-            gfx_puts("Sensor 2: PE2/PE3 (Player 2)");
+            gfx_puts("Sensor 2: PD6/PD7 (Player 2)");
             
             // Mensaje de estado
             gfx_setTextColor(LCD_YELLOW, LCD_BLACK);
@@ -402,14 +402,14 @@ static void timer_warmup(void)
     gfx_setTextSize(2);
     gfx_setTextColor(LCD_GREEN, LCD_BLACK);
     gfx_setCursor(LCD_WIDTH/6, 100);
-    gfx_puts("CALIBRACION");
+    gfx_puts("JUEGO PONG");
     gfx_setCursor(LCD_WIDTH/6, 130);
-    gfx_puts("COMPLETADA!");
+    gfx_puts("LISTO!");
     
     gfx_setTextSize(1);
     gfx_setTextColor(LCD_WHITE, LCD_BLACK);
     gfx_setCursor(LCD_WIDTH/8, 180);
-    gfx_puts("Sensores listos para usar");
+    gfx_puts("Usa tus manos!");
     
     gfx_setTextColor(LCD_YELLOW, LCD_BLACK);
     gfx_setCursor(LCD_WIDTH/8, LCD_HEIGHT-30);
