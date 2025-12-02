@@ -52,7 +52,7 @@
 #define SENSOR_DEADZONE_MM      100      // Ignore small changes
 
 /* Timer warmup */
-#define TIMER_WARMUP_MS         52000//60000   // 60 segundos
+#define TIMER_WARMUP_MS         1000//60000   // 60 segundos
 
 /* ============================================================================
  * BUTTON CONFIGURATION (User Button - B1/PA0)
@@ -151,18 +151,48 @@ static inline void delay_ms(uint32_t ms)
 
 static void tim5_setup(void)
 {
+    // 1. Reset completo
     rcc_periph_reset_pulse(RST_TIM5);
     timer_disable_counter(TIM5);
     
+    // 2. Configuración base
     timer_set_mode(TIM5, TIM_CR1_CKD_CK_INT, TIM_CR1_CMS_EDGE, TIM_CR1_DIR_UP);
-    timer_set_prescaler(TIM5, 83);  // 84 MHz / 84 = 1 MHz (1 µs)
     
-    timer_disable_preload(TIM5);
-    timer_continuous_mode(TIM5);
+    // 3. Prescaler: 84 MHz → 1 MHz
+    timer_set_prescaler(TIM5, 83);
+    
+    // 4. Período máximo (32 bits)
     timer_set_period(TIM5, 0xFFFFFFFF);
+    
+    // 5. Iniciar contador en 0
     timer_set_counter(TIM5, 0);
     
+    // 6. *** CRÍTICO: Aplicar configuración inmediatamente ***
+    timer_generate_event(TIM5, TIM_EGR_UG);
+    
+    // 7. Deshabilitar preload (actualización inmediata de registros)
+    timer_disable_preload(TIM5);
+    
+    // 8. Modo continuo
+    timer_continuous_mode(TIM5);
+    
+    // 9. Habilitar timer
     timer_enable_counter(TIM5);
+    
+    // 10. Verificación opcional (para debugging)
+    #ifdef DEBUG
+    uint32_t test_start = timer_get_counter(TIM5);
+    delay_us(100);  // Esperar 100 µs
+    uint32_t test_end = timer_get_counter(TIM5);
+    uint32_t elapsed = timer_diff(test_start, test_end);
+    
+    if (elapsed < 90 || elapsed > 110) {
+        console_puts("ERROR: Timer no configurado correctamente!\n");
+        console_puts("Esperado: ~100 us, Medido: ");
+        console_puts(itoa(elapsed));
+        console_puts(" us\n");
+    }
+    #endif
 }
 
 static void gpio_sensor_setup(void)
