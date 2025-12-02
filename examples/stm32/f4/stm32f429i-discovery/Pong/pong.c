@@ -47,11 +47,11 @@
 
 /* Distance mapping for paddles */
 #define MIN_SENSOR_DISTANCE_MM  50      // 5 cm minimum
-#define MAX_SENSOR_DISTANCE_MM  400     // 40 cm maximum
-#define SENSOR_DEADZONE_MM      100      // Ignore small changes
+#define MAX_SENSOR_DISTANCE_MM  200//400     // 40 cm maximum
+#define SENSOR_DEADZONE_MM      170      // Ignore small changes
 
 /* Timer warmup */
-#define TIMER_WARMUP_MS         1000//60000   // 60 segundos
+#define TIMER_WARMUP_MS        1000//60000   // 60 segundos
 
 /* ============================================================================
  * BUTTON CONFIGURATION (User Button - B1/PA0)
@@ -84,7 +84,7 @@
 #define SENSOR_UPDATE_MS    30      // ~33 Hz sensor reading
 
 /* FILTRO DE SUAVIZADO */
-#define FILTER_ALPHA    0.5f    // Factor de filtro
+#define FILTER_ALPHA    0.3f    // Factor de filtro
 
 /* ============================================================================
  * GAME STRUCTURES
