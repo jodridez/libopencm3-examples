@@ -641,8 +641,8 @@ int main(void)
     console_puts("\n========================================\n");
     console_puts("  PONG - Dual Sensor Gesture Control\n");
     console_puts("========================================\n");
-    console_puts("Player 1: Sensor 1 (PB6/PB7)\n");
-    console_puts("Player 2: Sensor 2 (PE2/PE3)\n");
+    console_puts("Player 1: Sensor 1 (PD4/PD5)\n");
+    console_puts("Player 2: Sensor 2 (PD6/PD7)\n");
     console_puts("Primer jugador a 5 puntos gana!\n\n");
     
     /* Timer warmup con barra de carga gráfica */
