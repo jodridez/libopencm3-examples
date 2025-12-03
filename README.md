@@ -1,126 +1,151 @@
-# README
-[![Build Status](https://travis-ci.org/libopencm3/libopencm3-examples.svg?branch=master)](https://travis-ci.org/libopencm3/libopencm3-examples)
 
-[![Gitter channel](https://badges.gitter.im/libopencm3/discuss.svg)](https://gitter.im/libopencm3/discuss)
+# Instrucciones de Construcción y Programación
 
-This repository contains assorted example projects for libopencm3.
+## 1. Clonar el repositorio (si aplica)
+```bash
+git clone git@github.com:jodridez/libopencm3-examples.git
+cd libopencm3-examples
+git checkout Proyecto
+```
 
-The libopencm3 project aims to create an open-source firmware library for
-various ARM Cortex-M microcontrollers.
+## 1.2 Inicializar y actualizar submódulos
+```bash
+git submodule init
+git submodule update
+```
 
-For more information visit http://libopencm3.org
+## 2. Compilar libopencm3 (solo la primera vez)
+```bash
+cd libopencm3
+make
+```
 
-The examples are meant as starting points for different subsystems on multitude
-of platforms. If you're just looking to test your build environment and hardware,
-the [libopencm3-miniblink](https://github.com/libopencm3/libopencm3-miniblink) 
-may be more useful, as it covers _many_ more boards, but it is much more limited.
+## 3. Compilar el proyecto principal (Pong)
+```bash
+cd ..
+cd examples/stm32/f4/stm32f429i-discovery/Pong
+make
+```
 
-Feel free to add new examples and send them to us either via the mailinglist or
-preferably via a github pull request.
+## 4. Cargar en la placa mediante OpenOCD
+```bash
+make flash
+```
+## 5. Conectar a la consola serial (opcional)
+```bash
+screen /dev/ttyACM0 115200
+```
 
-## Usage
+## Si se quiere cargar usar el programa de prueba de los sensores:
+## 1. Compilar el programa para probar los sensores (HY-SRF05)
+```bash
+cd ../../../../..
+cd examples/stm32/f4/stm32f429i-discovery/HY-SRF05
+make
+```
 
-You _must_ run "make" in the top level directory first.  This builds the
-library and all examples.  If you're simply hacking on a single example after
-that, you can type "make clean; make" in any of the individual project
-directories later.
+## 2. Cargar en la placa mediante OpenOCD
+```bash
+make flash
+```
 
-For more verbose output, to see compiler command lines, use "make V=1"
-For insanity levels of verboseness, use "make V=99"
+## 3. Conectar a la consola serial
+```bash
+screen /dev/ttyACM0 115200
+```
 
-The makefiles are generally useable for your own projects with
-only minimal changes for the libopencm3 install path (See Reuse)
 
-## Make Flash Target
 
-Please note, the "make flash" target is complicated and not always self-consistent.  Please see: https://github.com/libopencm3/libopencm3-examples/issues/34
 
-For flashing the 'miniblink' example (after you built libopencm3 and the
-examples by typing 'make' at the top-level directory) onto the Olimex
-STM32-H103 eval board (ST STM32F1 series microcontroller), you can execute:
 
-    cd examples/stm32/f1/stm32-h103/miniblink
-    make flash V=1
+# Pong con Control Gestual – Instrucciones de Uso
+Controlado mediante dos sensores ultrasónicos HY-SR05/HCSR05 y un botón USER (PA0)  
+Plataforma: **STM32F429I-DISC1**
 
-The Makefiles of the examples are configured to use a certain OpenOCD
-flash programmer, you might need to change some of the variables in the
-Makefile if you use a different one.
+---
 
-To program via a Black Magic Probe, simply provide the serial port, eg:
+## 📌 1. Conexiones de Hardware
 
-    cd examples/stm32/f1/stm32-h103/miniblink
-    make flash BMP_PORT=/dev/ttyACM0
+### **Sensores Ultrasonido (versión PD4–PD7)**  
+| Jugador | Trigger | Echo | Puerto MCU |
+|--------|---------|------|------------|
+| Player 1 | TRIG1 | ECHO1 | PD4 / PD5 |
+| Player 2 | TRIG2 | ECHO2 | PD6 / PD7 |
 
-To program via texane/stlink (st-flash utility), use the special target:
+**Advertencia:** Necesaria division de tension a 3.3 V en la salida echo del sensor
 
-    cd examples/stm32/f1/stm32vl-discovery/miniblink
-    make miniblink.stlink-flash
+**Recomendación:** Mantener los sensores separados al menos 15–20 cm para evitar interferencias.
 
-If you rather use GDB to connect to the st-util you can provide the STLINK\_PORT
-to the flash target.
+---
 
-    cd examples/stm32/f1/stm32vl-discovery/miniblink
-    make flash STLINK_PORT=:4242
+## 📌 2. Botón USER (Reinicio / Inicio)
+- El botón **USER** en la placa (PA0) inicia el juego después del *warmup*.
+- Durante *Game Over*, una nueva pulsación reinicia el juego.
 
-## Flashing Manually
-You can also flash manually. Using a miriad of different tools depending on
-your setup. Here are a few examples.
+---
 
-### OpenOCD
+## 📌 3. Flujo de Inicio del Sistema
 
-    openocd -f interface/jtagkey-tiny.cfg -f target/stm32f1x.cfg
-    telnet localhost 4444
-    reset halt
-    flash write_image erase foobar.hex
-    reset
+1. Encender el STM32F429I-DISC1.  
+2. El firmware ejecuta una fase de *warmup* del timer (≈1 s o 60 s según configuración).  
+   - Se muestra una **barra de progreso** en el LCD.  
+   - Esto estabiliza el temporizador para medir pulsos de 10 µs correctamente.
+3. Al finalizar, aparecerá en pantalla:  
+   **“BOTON USER para iniciar”**
+4. Presionar **USER** para iniciar el juego.
 
-Replace the "jtagkey-tiny.cfg" with whatever JTAG device you are using, and/or
-replace "stm32f1x.cfg" with your respective config file. Replace "foobar.hex"
-with the file name of the image you want to flash.
+---
 
-### Black Magic Probe
+## 📌 4. Cómo Controlar las Paletas
 
-    cd examples/stm32/f1/stm32vl-discovery/miniblink
-    arm-none-eabi-gdb miniblink.elf
-    target extended_remote /dev/ttyACM0
-    monitor swdp_scan
-    attach 1
-    load
-    run
+Cada jugador mueve su paleta acercando o alejando la mano frente a su sensor:
 
-To exit the gdb session type `<Ctrl>-C` and `<Ctrl>-D`. It is useful to add the
-following to the .gdbinit to make the flashing and debugging easier:
+- **Movimiento vertical proporcional a la distancia detectada.**
+- Se aplica un **filtro de suavizado (EMA)** para evitar jitter.
+- Rango recomendado:  
+  **5 cm – 20 cm** desde el sensor.
 
-    set target-async on
-    set confirm off
-    set mem inaccessible-by-default off
-    #set debug remote 1
-    tar ext /dev/ttyACM0
-    mon version
-    mon swdp_scan
-    att 1
+Si el sensor no detecta, la paleta mantiene la última posición válida.
 
-Having this in your .gdbinit boils down the flashing/debugging process to:
+---
 
-    cd examples/stm32/f1/stm32vl-discovery/miniblink
-    arm-none-eabi-gdb miniblink.elf
-    load
-    run
+## 📌 5. Reglas del Juego
 
-### ST-Link (st-util)
+- El primer jugador en alcanzar **5 puntos** gana.
+- Al anotar un punto, la pelota regresa al centro.
+- Al finalizar la partida, se muestra el mensaje:
+  - **PLAYER 1 WINS**  
+  - **PLAYER 2 WINS**
+- Para iniciar una nueva partida, presiona el **botón USER**.
 
-This example uses the st-util by texane that you can find on [GitHub](https://github.com/texane/stlink).
+---
 
-    cd examples/stm32/f1/stm32vl-discovery/miniblink
-    arm-none-eabi-gdb miniblink.elf
-    target extended-remote :4242
-    load
-    run
+## 📌 6. Parámetros Editables en el Código
 
-## Reuse
+| Función | Parámetro | Efecto |
+|--------|-----------|--------|
+| Suavizado | `FILTER_ALPHA` | Reduce jitter (0 = muy suave, 1 = crudo) |
+| Rango del sensor | `MIN_SENSOR_DISTANCE_MM / MAX_SENSOR_DISTANCE_MM` | Ajusta la zona útil |
+| Velocidad de la pelota | `BALL_SPEED_X / BALL_SPEED_Y` | Dificultad |
+| Puntos para ganar | `WINNING_SCORE` | Objetivo del juego |
 
-If you want to use libopencm3 in your own project, the _easiest_ way is
-to use the template repository we created for this purpose.
+---
 
-See https://github.com/libopencm3/libopencm3-template
+## 📌 7. Requisitos de Librerías Externas
+
+El proyecto depende de:  
+- libopencm3  
+- Drivers de LCD (lcd-spi.h)  
+- Librería de gráficos (gfx.h)  
+- SDRAM + consola serie  
+- clock.c / console.c / sdram.c preinstalados en la plantilla de la placa Discovery
+
+---
+
+## 📌 8. Consejos de Uso
+
+- Evita colocar la mano demasiado cerca del sensor (< 3 cm).  
+- El HY-SR05 puede fallar si detecta superficies brillantes o pequeñas.  
+- Asegura que los sensores apunten hacia el pecho o mano del jugador.
+
 
